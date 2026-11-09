@@ -45,6 +45,7 @@
         <div class="side-foot-act">
           <button type="button" class="btn btn-sm" data-action="edit-me">Akun saya</button>
           <button type="button" class="btn btn-sm btn-quiet" data-action="logout">Keluar</button>
+          <button type="button" class="btn btn-sm btn-quiet" data-action="reset-data" id="btn-reset-data" hidden>Reset Data</button>
         </div>
       </div>
     </aside>
@@ -495,6 +496,11 @@
           <label for="confirm-type">Ketik <b>yakin</b> untuk menghapus permanen</label>
           <input id="confirm-type" type="text" autocomplete="off" placeholder="yakin">
           <p class="field-error" id="confirm-type-err" role="alert"></p>
+        </div>
+        <div class="field" id="confirm-pw-wrap" hidden>
+          <label for="confirm-pw">Masukkan password reset</label>
+          <input id="confirm-pw" type="password" autocomplete="current-password" placeholder="Password reset">
+          <p class="field-error" id="confirm-pw-err" role="alert"></p>
         </div>
         <div class="field" id="confirm-reason-wrap" hidden>
           <label for="confirm-reason">Alasan <span class="opt">(opsional)</span></label>

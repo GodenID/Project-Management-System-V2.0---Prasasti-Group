@@ -90,6 +90,7 @@ Migrasi otomatis: akun lama format email (`rina@tim.local`) dipindah jadi `rina`
 - Tab: **Semua Project**, Lead Masuk, Proses QL, Deal, Tidak Deal — count per tab.
 - Search (`/`), sort, filter stage / entitas / tipe / PIC / status QL / dokumen / rentang tanggal.
 - Pagination serverless 50/baris, bulk select + **Hapus yang dipilih**.
+- **Reset Data** (Admin, sidebar bawah): hapus semua project + dokumen + nomor QL dari `0001`. Wajib password reset di dialog konfirmasi. Client, karyawan, master tetap.
 - Muat **13 data contoh** sekali klik saat tabel masih kosong.
 - Pintasan: `N` buat baru, `B` sidebar, `Enter` detail, `Esc` tutup dialog.
 

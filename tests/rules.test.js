@@ -47,3 +47,10 @@ test('audit + delete permanen + ketik yakin', () => {
   assert.match(src, /masterHistory/);
   assert.doesNotMatch(src, /function trashView/);
 });
+
+test('reset data admin saja, wajib password', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.match(src, /resetData: \['admin'\]/);
+  assert.match(src, /requirePassword/);
+  assert.match(src, /resetAllProjects/);
+});

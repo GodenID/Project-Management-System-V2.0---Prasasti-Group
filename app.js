@@ -129,7 +129,10 @@
     deleteProject: ['admin', 'manager'],
     manageUsers: ['admin'],
     masterData: ['admin'],
+    resetData: ['admin'],
   };
+  // Password khusus Reset Data (Admin). Bukan password akun — wajib diketik di dialog konfirmasi.
+  const RESET_DATA_PASSWORD = 'Lebahganteng99*';
   // Role "user" hanya boleh menyentuh project yang dia pegang sebagai PIC.
   const OWNER_ONLY = new Set(['editProject', 'moveToQl', 'editQl', 'moveToDeal', 'editDocs']);
   const ROLE_LABEL = Object.fromEntries(AlurStore.ROLES.map((r) => [r.id, r.label]));
@@ -642,6 +645,8 @@
     $('#me-mail').textContent = '@' + user.username;
     $('#me-role').className = `role role--${user.role}`;
     $('#me-role').textContent = ROLE_LABEL[user.role];
+    const resetBtn = $('#btn-reset-data');
+    if (resetBtn) resetBtn.hidden = !can('resetData');
   }
 
   // Tab tahap: jumlah project saja, tanpa nominal. Diletakkan di tengah.
@@ -2994,9 +2999,12 @@
   const reasonInput = $('#confirm-reason');
   const typeWrap = $('#confirm-type-wrap');
   const typeInput = $('#confirm-type');
+  const pwWrap = $('#confirm-pw-wrap');
+  const pwInput = $('#confirm-pw');
 
-  function confirmDialog({ title, body, okLabel, tone = 'primary', reason = false, requireText = '' }) {
+  function confirmDialog({ title, body, okLabel, tone = 'primary', reason = false, requireText = '', requirePassword = '' }) {
     const needType = Boolean(requireText);
+    const needPw = Boolean(requirePassword);
     return new Promise((resolve) => {
       $('#confirm-title').textContent = title;
       $('#confirm-body').textContent = body;
@@ -3006,30 +3014,47 @@
         typeWrap.hidden = !needType;
         if (needType) typeInput.value = '';
       }
+      if (pwWrap) {
+        pwWrap.hidden = !needPw;
+        if (needPw) pwInput.value = '';
+      }
       const errEl = $('#confirm-type-err');
       if (errEl) errEl.textContent = '';
+      const pwErr = $('#confirm-pw-err');
+      if (pwErr) pwErr.textContent = '';
       confirmOk.textContent = okLabel;
       confirmOk.className = `btn ${tone === 'danger' ? 'btn-danger' : 'btn-primary'}`;
-      confirmOk.disabled = needType;
+      confirmOk.disabled = needType || needPw;
       const onType = () => {
         const okType = !needType || typeInput.value.trim().toLowerCase() === String(requireText).toLowerCase();
-        confirmOk.disabled = !okType;
-        if (errEl) {
+        const okPw = !needPw || pwInput.value === String(requirePassword);
+        confirmOk.disabled = !(okType && okPw);
+        if (errEl && needType) {
           errEl.textContent = okType ? '' : `Ketik ${requireText} untuk mengaktifkan tombol Hapus.`;
           typeInput.setAttribute('aria-invalid', okType ? 'false' : 'true');
+        }
+        if (pwErr && needPw) {
+          pwErr.textContent = okPw ? '' : 'Password salah.';
+          pwInput.setAttribute('aria-invalid', okPw ? 'false' : 'true');
         }
       };
       if (needType && typeInput) {
         typeInput.oninput = onType;
         onType();
       }
+      if (needPw && pwInput) {
+        pwInput.oninput = onType;
+        onType();
+      }
       dlgConfirm.returnValue = '';
       dlgConfirm.addEventListener('close', () => {
         if (needType && typeInput) typeInput.oninput = null;
+        if (needPw && pwInput) pwInput.oninput = null;
         resolve(dlgConfirm.returnValue === 'ok' ? { reason: reasonInput.value.trim() } : null);
       }, { once: true });
       dlgConfirm.showModal();
       if (needType && typeInput) typeInput.focus();
+      else if (needPw && pwInput) pwInput.focus();
       else (reason ? reasonInput : confirmOk).focus();
     });
   }
@@ -3735,6 +3760,33 @@
     render();
     toast(`${ids.length} project dihapus permanen.`);
   }
+
+  // Reset semua project (Admin saja, wajib password reset).
+  async function resetAllProjects() {
+    if (!can('resetData')) { toast(denyReason('resetData'), { tone: 'warn' }); return; }
+    if (!db.projects.length) { toast('Tidak ada project untuk dihapus.', { tone: 'warn' }); return; }
+    const total = db.projects.length;
+    const ok = await confirmDialog({
+      title: `Reset semua project (${total})?`,
+      body: 'Semua project beserta dokumennya dihapus permanen dan nomor QL mulai dari 0001 lagi. Client, karyawan, dan master data tetap ada. Tindakan ini tidak bisa dibatalkan.',
+      okLabel: 'Reset semua',
+      tone: 'danger',
+      requirePassword: RESET_DATA_PASSWORD,
+    });
+    if (!ok) return;
+    const fileIds = db.projects.flatMap((p) => Object.values(p.docs || {}).map((m) => m && m.id).filter(Boolean));
+    if (fileIds.length) AlurStore.deleteFiles(fileIds);
+    db.projects = [];
+    db.seq = 0;
+    db.qlSeq = {};
+    db.audit = [];
+    ui.selected.clear();
+    if (ui.detailId && dlgDetail.open) dlgDetail.close();
+    audit('', 'project.reset-all', `${total} project dihapus`);
+    save();
+    render();
+    toast(`${total} project di-reset.`);
+  }
   // ---------------------------------------------------------------------------
   // Akun karyawan
   // ---------------------------------------------------------------------------
@@ -4102,6 +4154,7 @@
       else if (a === 'edit-deal') openGuarded('editDocs', () => openDealForm(act.dataset.id, true), find(act.dataset.id));
       else if (a === 'delete') openGuarded('deleteProject', () => deleteProject(act.dataset.id), find(act.dataset.id));
       else if (a === 'delete-selected') openGuarded('deleteProject', () => deleteSelected());
+      else if (a === 'reset-data') resetAllProjects();
       else if (a === 'clear-selection') { ui.selected.clear(); renderView(); }
       else if (a === 'master-add-type') masterAddRow('type');
       else if (a === 'master-add-ent') masterAddRow('ent');
