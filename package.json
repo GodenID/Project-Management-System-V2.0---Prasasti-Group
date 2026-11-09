@@ -1,0 +1,11 @@
+{
+  "name": "prasasti-pms",
+  "version": "2.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "lint": "node --check store.js && node --check app.js && node --check login.js && echo LINT_OK",
+    "test": "node --test tests/rules.test.js",
+    "check": "npm run lint && npm run test"
+  }
+}

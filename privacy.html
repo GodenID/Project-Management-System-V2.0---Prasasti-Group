@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy · Prasasti Group</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Crect width='22' height='22' rx='3' fill='%231d4fc4'/%3E%3Cpath d='M5.5 11h9M11.5 7.5 15 11l-3.5 3.5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" media="print" onload="this.media='all'"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="legal-page">
+  <header class="legal-top">
+    <a class="brand" href="login.html" aria-label="Prasasti Group, kembali ke halaman masuk">
+      <span class="brand-name"><b>Prasasti Group</b><span class="brand-sub">Project Management System · Versi 2.0</span></span>
+    </a>
+    <nav class="legal-nav" aria-label="Halaman legal">
+      <a href="privacy.html" aria-current="page">Privacy Policy</a>
+      <a href="policy.html">Terms &amp; Policy</a>
+      <a href="disclaimer.html">Disclaimer</a>
+    </nav>
+  </header>
+
+  <main class="legal-main">
+    <p class="legal-kicker mono">Legal · Terakhir diperbarui 4 November 2026</p>
+    <h1 class="legal-title">Privacy Policy</h1>
+    <p class="legal-lead">Kebijakan ini menjelaskan data apa saja yang disimpan Project Management System Prasasti Group, di mana data itu berada, dan bagaimana data tersebut dipakai. Aplikasi ini berjalan sepenuhnya di browser perangkat pengguna — tidak ada server Prasasti Group yang menerima, menyimpan, atau meneruskan data Anda.</p>
+
+    <section class="legal-sec">
+      <h2>1. Data yang disimpan</h2>
+      <ul class="legal-list">
+        <li><b>Akun karyawan:</b> nama lengkap, username, role (User, Finance, Manager, Admin), dan password yang disimpan sebagai hash SHA-256 bersalt — bukan teks password asli.</li>
+        <li><b>Data project:</b> nama project, tipe, kategori, entitas, nomor QL, nilai penawaran, nominal deal, tanggal kegiatan, status QL, PIC project, dan riwayat perpindahan tahap.</li>
+        <li><b>Data client:</b> nama perusahaan, nama PIC, nomor WhatsApp, email, dan catatan yang diisi tim saat mengelola project.</li>
+        <li><b>Dokumen project:</b> berkas Quotation, RAB, Proposal, dan SPK (maksimal 10 MB per berkas) beserta nama, ukuran, tipe, waktu unggah, dan pengunggahnya.</li>
+        <li><b>Sesi masuk:</b> id pengguna aktif agar Anda tidak perlu masuk ulang di perangkat yang sama.</li>
+      </ul>
+    </section>
+
+    <section class="legal-sec">
+      <h2>2. Di mana data berada</h2>
+      <p>Metadata akun, project, dan client tersimpan di <b>localStorage</b> browser pada perangkat ini (kunci <span class="mono">alur:users:v1</span>, <span class="mono">alur:session:v1</span>, <span class="mono">alur:data:v2</span>). Berkas dokumen tersimpan di <b>IndexedDB</b> browser (database <span class="mono">alur-files</span>). Tidak ada data yang dikirim ke server, layanan analitik, atau pihak ketiga mana pun saat Anda memakai aplikasi ini.</p>
+    </section>
+
+    <section class="legal-sec">
+      <h2>3. Pemakaian data</h2>
+      <p>Data dipakai hanya untuk menjalankan alur kerja internal Prasasti Group: memindahkan project antar tahap (Lead Masuk, Proses QL, Deal, Tidak Deal), menampilkan laporan dan ekspor Excel, serta menegakkan hak akses berdasarkan role. Data tidak dijual, tidak disewakan, dan tidak dipakai untuk iklan.</p>
+    </section>
+
+    <section class="legal-sec">
+      <h2>4. Siapa yang bisa melihat data</h2>
+      <p>Hanya orang yang bisa membuka browser dan profil browser yang sama di perangkat ini, dan yang berhasil masuk dengan username dan password akun tim. Role membatasi tindakan di dalam aplikasi (misalnya hanya Admin yang mengelola akun), tetapi pembatasan ini ditegakkan di sisi klien, jadi siapa pun yang menguasai perangkat dan profil browser tersebut secara teknis dapat mengakses data lokalnya. Karena itu, gunakan perangkat dan akun sistem operasi yang terlindungi.</p>
+    </section>
+
+    <section class="legal-sec">
+      <h2>5. Retensi dan penghapusan</h2>
+      <p>Data tersimpan selama Anda tidak menghapusnya. Anda dapat menghapus seluruh data aplikasi dengan membersihkan data situs (<i>site data</i>) untuk halaman ini di pengaturan browser — tindakan ini menghapus akun, project, client, dan dokumen secara permanen dan tidak dapat dikembalikan. Admin juga dapat menghapus project dan mengelola akun dari dalam aplikasi. Berkas dokumen yang diganti atau dibatalkan ikut dihapus dari IndexedDB.</p>
+    </section>
+
+    <section class="legal-sec">
+      <h2>6. Kontak client di dalam project</h2>
+      <p>Nama, WhatsApp, dan email PIC client diisi untuk keperluan koordinasi project. Pastikan Anda memiliki dasar yang sah untuk menyimpan dan memakai kontak tersebut, dan perbarui atau hapus kontak itu bila sudah tidak diperlukan. Tautan WhatsApp di aplikasi membuka layanan WhatsApp yang tunduk pada kebijakan privasi layanannya sendiri.</p>
+    </section>
+
+    <section class="legal-sec">
+      <h2>7. Perubahan kebijakan</h2>
+      <p>Kebijakan ini dapat diperbarui mengikuti perubahan aplikasi. Tanggal di bagian atas halaman menunjukkan versi yang berlaku. Melanjutkan pemakaian aplikasi setelah perubahan berarti Anda menerima kebijakan yang diperbarui.</p>
+    </section>
+
+    <section class="legal-sec">
+      <h2>8. Hubungi kami</h2>
+      <p>Pertanyaan mengenai kebijakan ini dapat disampaikan ke tim internal Prasasti Group melalui Admin sistem di perusahaan Anda.</p>
+    </section>
+  </main>
+
+  <footer class="legal-foot">
+    <nav class="legal-foot-nav" aria-label="Dokumen legal">
+      <a href="privacy.html" aria-current="page">Privacy Policy</a>
+      <a href="policy.html">Terms &amp; Policy</a>
+      <a href="disclaimer.html">Disclaimer</a>
+      <a href="login.html">Masuk</a>
+    </nav>
+    <p class="legal-copy">Copyright © 2026 Prasasti Group. All rights reserved.</p>
+  </footer>
+</body>
+</html>

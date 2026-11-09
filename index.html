@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prasasti Group · Project Management System Versi 2.0</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Crect width='22' height='22' rx='3' fill='%231d4fc4'/%3E%3Cpath d='M5.5 11h9M11.5 7.5 15 11l-3.5 3.5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <!-- Font dimuat tanpa memblokir render; bila gagal, stack cadangan dipakai. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" media="print" onload="this.media='all'"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="app-page">
+  <div class="shell">
+    <!-- Sidebar: navigasi tahap + karyawan -->
+    <div class="sidebar-scrim" id="sidebar-scrim" hidden></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Navigasi utama">
+      <div class="side-head">
+        <a class="brand" href="#/semua" aria-label="Prasasti Group, ke Semua Project">
+          <span class="brand-name">
+            <b>Prasasti Group</b>
+            <span class="brand-sub">Project Management System</span><span class="ver-pill">Versi 2.0</span>
+          </span>
+        </a>
+        <button type="button" class="icon-btn side-close" id="sidebar-close" aria-label="Tutup sidebar">
+          <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </div>
+
+      <!-- Menu: Pipeline Project dan Karyawan, masing-masing halaman sendiri -->
+      <nav class="side-menu" id="side-menu" aria-label="Menu"></nav>
+
+      <div class="side-foot">
+        <div class="side-me">
+          <span class="avatar" id="me-avatar" aria-hidden="true"></span>
+          <span class="side-me-text">
+            <span class="side-me-name" id="me-name"></span>
+            <span class="side-me-mail mono" id="me-mail"></span>
+          </span>
+        </div>
+        <p class="side-me-role"><span class="role" id="me-role"></span></p>
+        <div class="side-foot-act">
+          <button type="button" class="btn btn-sm" data-action="edit-me">Akun saya</button>
+          <button type="button" class="btn btn-sm btn-quiet" data-action="logout">Keluar</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Area utama -->
+    <div class="main-col">
+      <header class="app-header">
+        <div class="topbar">
+          <button type="button" class="icon-btn side-toggle" id="sidebar-open" aria-label="Buka sidebar" aria-expanded="false" aria-controls="sidebar">
+            <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/></svg>
+          </button>
+
+          <label class="search">
+            <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.25" cy="7.25" r="4.25"/><path d="m10.5 10.5 3 3"/></svg>
+            <input id="search" type="search" placeholder="Cari project, nomor QL, perusahaan, atau PIC" aria-label="Cari project" autocomplete="off">
+            <kbd aria-hidden="true">/</kbd>
+          </label>
+
+          <!-- Aksi utama berganti sesuai halaman: Project Baru / Karyawan Baru -->
+          <button type="button" class="btn btn-primary btn-new" id="btn-primary" data-action="new">
+            <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>
+            <span class="btn-new-label" id="btn-primary-label">Project Baru</span>
+            <kbd aria-hidden="true">N</kbd>
+          </button>
+        </div>
+
+        <!-- Tab tahap project, di tengah halaman utama -->
+        <nav class="rail" id="rail" aria-label="Tahap project"></nav>
+      </header>
+
+      <main id="view" role="tabpanel" tabindex="-1"></main>
+
+      <footer class="app-foot">
+        <p class="app-copy">Project Management System Versi 2.0 · Copyright © 2026 Prasasti Group. All rights reserved.</p>
+        <nav class="app-legal" aria-label="Dokumen legal">
+          <a href="privacy.html">Privacy Policy</a>
+          <a href="policy.html">Terms &amp; Policy</a>
+          <a href="disclaimer.html">Disclaimer</a>
+        </nav>
+      </footer>
+    </div>
+  </div>
+
+  <noscript><p class="noscript">Aplikasi ini membutuhkan JavaScript.</p></noscript>
+
+  <!-- Form project baru / edit -->
+  <dialog id="dlg-form" class="modal modal--wide" aria-labelledby="form-title">
+    <form id="project-form" class="modal-inner" novalidate>
+      <header class="modal-head">
+        <div>
+          <h2 id="form-title">Project baru</h2>
+          <p class="modal-sub" id="form-sub"></p>
+        </div>
+        <button type="button" class="icon-btn" data-close aria-label="Tutup form">
+          <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+
+      <div class="modal-body">
+        <fieldset class="fs">
+          <legend class="fs-legend"><span class="fs-no mono">01</span>Data project</legend>
+          <div class="form-grid">
+            <div class="field span-2">
+              <label for="f-name">Nama project <span class="req" aria-hidden="true">*</span></label>
+              <input id="f-name" maxlength="140" autocomplete="off" required placeholder="Mis. Dekorasi Pernikahan Gedung Arjuna">
+              <p class="field-error" id="f-name-err" role="alert"></p>
+            </div>
+
+            <div class="field span-2">
+              <label id="lbl-type">Tipe project <span class="req" aria-hidden="true">*</span></label>
+              <div class="chips" id="f-type-group" role="radiogroup" aria-labelledby="lbl-type" aria-describedby="f-type-err"></div>
+              <p class="field-hint" id="f-type-hint"></p>
+              <p class="field-error" id="f-type-err" role="alert"></p>
+            </div>
+
+            <!-- Kategori mengikuti tipe project; disembunyikan bila tipe belum punya daftar -->
+            <div class="field span-2" id="f-subtype-wrap" hidden>
+              <label id="lbl-subtype">Kategori <span class="req" aria-hidden="true">*</span></label>
+              <div class="chips" id="f-subtype-group" role="radiogroup" aria-labelledby="lbl-subtype" aria-describedby="f-subtype-err"></div>
+              <div id="f-subtype-other-wrap" hidden>
+                <label class="sr-only" for="f-subtype-other">Tulis kategori lainnya</label>
+                <input id="f-subtype-other" class="other-input" maxlength="80" autocomplete="off" placeholder="Tulis kategori lainnya">
+              </div>
+              <p class="field-error" id="f-subtype-err" role="alert"></p>
+            </div>
+
+            <div class="field span-2">
+              <label id="lbl-ent">Entitas perusahaan <span class="req" aria-hidden="true">*</span></label>
+              <div class="chips chips--ent" id="f-ent-group" role="radiogroup" aria-labelledby="lbl-ent" aria-describedby="f-ent-err"></div>
+              <p class="field-hint">Badan usaha yang menjalankan project ini.</p>
+              <p class="field-error" id="f-ent-err" role="alert"></p>
+            </div>
+
+            <div class="field">
+              <label for="f-start">Tanggal kegiatan, dari <span class="opt">(opsional)</span></label>
+              <input id="f-start" type="date">
+              <p class="field-error" id="f-start-err" role="alert"></p>
+            </div>
+
+            <div class="field">
+              <label for="f-end">Sampai tanggal <span class="opt">(opsional)</span></label>
+              <input id="f-end" type="date" aria-describedby="f-date-hint">
+              <p class="field-error" id="f-end-err" role="alert"></p>
+            </div>
+
+            <p class="field-hint span-2" id="f-date-hint">
+              Boleh dikosongkan bila jadwal belum pasti. Untuk kegiatan satu hari, isi tanggal yang sama.
+              <button type="button" class="link-btn link-btn--sm" id="same-day">Samakan dengan tanggal mulai</button>
+            </p>
+          </div>
+        </fieldset>
+
+        <fieldset class="fs">
+          <legend class="fs-legend"><span class="fs-no mono">02</span>Klasifikasi lead</legend>
+          <div class="form-grid">
+            <div class="field span-2">
+              <label id="lbl-lead">Jenis lead <span class="req" aria-hidden="true">*</span></label>
+              <div class="pick" id="f-lead-group" role="radiogroup" aria-labelledby="lbl-lead" aria-describedby="f-lead-err"></div>
+              <p class="field-error" id="f-lead-err" role="alert"></p>
+            </div>
+
+            <div class="field span-2">
+              <label for="f-source">Sumber lead <span class="req" aria-hidden="true">*</span></label>
+              <select id="f-source" required></select>
+              <p class="field-error" id="f-source-err" role="alert"></p>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="fs">
+          <legend class="fs-legend"><span class="fs-no mono">03</span>Informasi client</legend>
+          <div class="form-grid">
+            <div class="field">
+              <label for="f-company">Nama perusahaan <span class="req" aria-hidden="true">*</span></label>
+              <div class="combo" id="company-combo">
+                <input id="f-company" maxlength="140" autocomplete="off" required
+                       role="combobox" aria-expanded="false" aria-controls="company-options"
+                       aria-describedby="f-company-hint" placeholder="Mis. PT Sinar Abadi">
+                <ul class="picker-options" id="company-options" role="listbox" aria-label="Client tersimpan" hidden></ul>
+              </div>
+              <p class="field-hint" id="f-company-hint">Pilih client yang sudah tersimpan untuk mengisi kontaknya otomatis.</p>
+              <p class="field-error" id="f-company-err" role="alert"></p>
+            </div>
+
+            <div class="field">
+              <label for="f-pic">Nama PIC client <span class="req" aria-hidden="true">*</span></label>
+              <input id="f-pic" maxlength="100" autocomplete="off" required placeholder="Nama kontak utama">
+              <p class="field-error" id="f-pic-err" role="alert"></p>
+            </div>
+
+            <div class="field">
+              <label for="f-wa">No WhatsApp <span class="req" aria-hidden="true">*</span></label>
+              <div class="affix">
+                <span class="affix-label" aria-hidden="true">+62</span>
+                <input id="f-wa" inputmode="tel" autocomplete="off" required placeholder="812 3456 7890" aria-describedby="f-wa-err">
+              </div>
+              <p class="field-error" id="f-wa-err" role="alert"></p>
+            </div>
+
+            <div class="field">
+              <label for="f-email">Email <span class="opt">(opsional)</span></label>
+              <input id="f-email" type="email" maxlength="140" autocomplete="off" placeholder="nama@domain.com">
+              <p class="field-error" id="f-email-err" role="alert"></p>
+            </div>
+
+            <div class="field span-2">
+              <label for="f-desc">Deskripsi</label>
+              <textarea id="f-desc" rows="3" maxlength="1500" placeholder="Kebutuhan client, lokasi, jadwal survei, hal yang perlu diingat"></textarea>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="fs">
+          <legend class="fs-legend"><span class="fs-no mono">04</span>PIC project</legend>
+          <div class="field">
+            <label for="f-owner-search">Cari dan pilih PIC <span class="req" aria-hidden="true">*</span></label>
+            <p class="field-hint field-hint--top" id="f-owner-hint">Default: akun Anda. Bisa lebih dari satu PIC.</p>
+            <div class="picker" id="owner-picker">
+              <div class="picker-tokens" id="owner-tokens"></div>
+              <div class="picker-input">
+                <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.25" cy="7.25" r="4.25"/><path d="m10.5 10.5 3 3"/></svg>
+                <input id="f-owner-search" type="text" role="combobox" autocomplete="off"
+                       aria-expanded="false" aria-controls="owner-options" aria-describedby="f-owner-hint"
+                       placeholder="Ketik nama karyawan">
+              </div>
+              <ul class="picker-options" id="owner-options" role="listbox" aria-label="Pilihan PIC project" hidden></ul>
+            </div>
+            <p class="field-error" id="f-owner-err" role="alert"></p>
+          </div>
+        </fieldset>
+      </div>
+
+      <footer class="modal-foot">
+        <p class="modal-foot-note" id="form-foot-note"></p>
+        <div class="modal-foot-actions">
+          <button type="button" class="btn btn-ghost" data-close>Batal</button>
+          <button type="submit" class="btn btn-primary" id="form-submit">Simpan ke Lead Masuk</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Wajib diisi sebelum pindah ke Proses QL -->
+  <dialog id="dlg-ql" class="modal" aria-labelledby="ql-title">
+    <form id="ql-form" class="modal-inner" novalidate>
+      <header class="modal-head">
+        <div>
+          <h2 id="ql-title">Lanjut ke Proses QL</h2>
+          <p class="modal-sub" id="ql-sub"></p>
+        </div>
+        <button type="button" class="icon-btn" data-close aria-label="Tutup">
+          <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+
+      <div class="modal-body">
+        <div class="ql-preview">
+          <span class="ql-preview-label">Nomor QL yang akan dibuat</span>
+          <strong class="ql-preview-no mono" id="ql-preview-no">—</strong>
+          <span class="ql-preview-type" id="ql-preview-type"></span>
+        </div>
+
+        <div class="field">
+          <label id="lbl-qlstatus">Status QL <span class="req" aria-hidden="true">*</span></label>
+          <div class="pick" id="q-status-group" role="radiogroup" aria-labelledby="lbl-qlstatus" aria-describedby="q-status-err"></div>
+          <p class="field-error" id="q-status-err" role="alert"></p>
+        </div>
+
+        <div class="field">
+          <label for="q-offer">Nilai penawaran <span class="req" aria-hidden="true">*</span></label>
+          <div class="affix">
+            <span class="affix-label" aria-hidden="true">Rp</span>
+            <input id="q-offer" inputmode="numeric" autocomplete="off" required placeholder="0" aria-describedby="q-offer-hint q-offer-err">
+          </div>
+          <p class="field-hint" id="q-offer-hint">Harga penawaran yang dikirim ke client.</p>
+          <p class="field-error" id="q-offer-err" role="alert"></p>
+        </div>
+
+        <div class="field">
+          <label for="q-note">Catatan QL <span class="opt">(opsional)</span></label>
+          <textarea id="q-note" rows="2" maxlength="500" placeholder="Mis. menunggu revisi gambar dari client"></textarea>
+        </div>
+      </div>
+
+      <footer class="modal-foot">
+        <p class="modal-foot-note">Nomor QL final dihitung saat simpan. Bila user lain lebih dulu mengisi, nomor bisa berbeda dari perkiraan.</p>
+        <div class="modal-foot-actions">
+          <button type="button" class="btn btn-ghost" data-close>Batal</button>
+          <button type="submit" class="btn btn-primary" id="ql-submit">Simpan &amp; pindahkan</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Wajib diisi sebelum project jadi Deal -->
+  <dialog id="dlg-deal" class="modal" aria-labelledby="deal-title">
+    <form id="deal-form" class="modal-inner" novalidate>
+      <header class="modal-head">
+        <div>
+          <h2 id="deal-title">Jadikan Deal</h2>
+          <p class="modal-sub" id="deal-sub"></p>
+        </div>
+        <button type="button" class="icon-btn" data-close aria-label="Tutup">
+          <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+
+      <div class="modal-body">
+        <div class="field">
+          <label for="d-value">Nominal deal <span class="req" aria-hidden="true">*</span></label>
+          <div class="affix">
+            <span class="affix-label" aria-hidden="true">Rp</span>
+            <input id="d-value" inputmode="numeric" autocomplete="off" required placeholder="0" aria-describedby="d-value-hint d-value-err">
+          </div>
+          <p class="field-hint" id="d-value-hint">Terisi dari nilai penawaran. Ubah bila angka akhirnya berbeda.</p>
+          <p class="field-error" id="d-value-err" role="alert"></p>
+        </div>
+
+        <fieldset class="docs" id="deal-docs">
+          <legend class="docs-legend">Dokumen <span id="docs-rule" class="docs-rule"></span></legend>
+          <div id="doc-fields"></div>
+          <p class="field-hint">Maksimal 10 MB per berkas. Format: PDF, Word, Excel, atau gambar.</p>
+          <p class="field-error" id="d-docs-err" role="alert"></p>
+        </fieldset>      </div>
+
+      <footer class="modal-foot">
+        <p class="modal-foot-note">Deal bersifat final: tahap tidak bisa dipindah lagi.</p>
+        <div class="modal-foot-actions">
+          <button type="button" class="btn btn-ghost" data-close>Batal</button>
+          <button type="submit" class="btn btn-primary" id="deal-submit">Simpan &amp; jadikan Deal</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Buat / edit akun karyawan -->
+  <dialog id="dlg-user" class="modal modal--sm" aria-labelledby="user-title">
+    <form id="user-form" class="modal-inner" novalidate>
+      <header class="modal-head">
+        <div>
+          <h2 id="user-title">Buat akun karyawan</h2>
+          <p class="modal-sub" id="user-sub"></p>
+        </div>
+        <button type="button" class="icon-btn" data-close aria-label="Tutup">
+          <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+
+      <div class="modal-body">
+        <div class="field">
+          <label for="u-name">Nama lengkap <span class="req" aria-hidden="true">*</span></label>
+          <input id="u-name" maxlength="80" autocomplete="off" required placeholder="Nama yang muncul sebagai PIC project">
+          <p class="field-error" id="u-name-err" role="alert"></p>
+        </div>
+
+        <div class="field">
+          <label for="u-username">Username <span class="req" aria-hidden="true">*</span></label>
+          <input id="u-username" type="text" maxlength="40" autocomplete="off" required placeholder="huruf kecil, mis. rina">
+          <p class="field-error" id="u-username-err" role="alert"></p>
+        </div>
+
+        <div class="field" id="u-role-wrap">
+          <label id="lbl-role">Role <span class="req" aria-hidden="true">*</span></label>
+          <div class="pick pick--one" id="u-role-group" role="radiogroup" aria-labelledby="lbl-role" aria-describedby="u-role-err"></div>
+          <p class="field-error" id="u-role-err" role="alert"></p>
+        </div>
+
+        <div class="field">
+          <label for="u-password">Password <span class="req" aria-hidden="true">*</span><span class="opt" id="u-password-opt" hidden> — kosongkan bila tidak diubah</span></label>
+          <input id="u-password" type="password" maxlength="100" autocomplete="new-password" placeholder="Minimal 6 karakter">
+          <p class="field-error" id="u-password-err" role="alert"></p>
+        </div>
+
+        <div class="field" id="u-old-wrap" hidden>
+          <label for="u-old-password">Password saat ini <span class="req" aria-hidden="true">*</span><span class="opt"> — wajib bila ganti password sendiri</span></label>
+          <input id="u-old-password" type="password" maxlength="100" autocomplete="current-password" placeholder="Password akun Anda sekarang">
+          <p class="field-error" id="u-old-password-err" role="alert"></p>
+        </div>
+      </div>
+
+      <footer class="modal-foot">
+        <div class="modal-foot-actions">
+          <button type="button" class="btn btn-ghost" data-close>Batal</button>
+          <button type="submit" class="btn btn-primary" id="user-submit">Buat akun</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Bulk buat akun karyawan -->
+  <dialog id="dlg-bulk-user" class="modal" aria-labelledby="bulk-user-title">
+    <form id="bulk-user-form" class="modal-inner" novalidate>
+      <header class="modal-head">
+        <div>
+          <h2 id="bulk-user-title">Buat banyak akun karyawan</h2>
+          <p class="modal-sub">Satu baris per karyawan: Nama Lengkap, username, password, role. Role kosong = User.</p>
+        </div>
+        <button type="button" class="icon-btn" data-close aria-label="Tutup">
+          <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <div class="field">
+          <label for="b-users">Daftar karyawan</label>
+          <textarea id="b-users" rows="9" placeholder="Rina Kartika, rina, demo123&#10;Dimas Prakoso, dimas, demo123, manager"></textarea>
+          <p class="field-hint">Pemisah koma. Role boleh: user, finance, manager, admin. Kosong = User.</p>
+          <p class="field-error" id="b-users-err" role="alert"></p>
+        </div>
+        <div id="b-result" aria-live="polite"></div>
+      </div>
+      <footer class="modal-foot">
+        <p class="modal-foot-note" id="b-note"></p>
+        <div class="modal-foot-actions">
+          <button type="button" class="btn btn-ghost" data-close>Batal</button>
+          <button type="submit" class="btn btn-primary" id="b-submit">Buat semua</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Client: data kontak dan daftar project miliknya -->
+  <dialog id="dlg-client" class="modal" aria-labelledby="client-title">
+    <form id="client-form" class="modal-inner" novalidate>
+      <header class="modal-head">
+        <div>
+          <h2 id="client-title">Client</h2>
+          <p class="modal-sub" id="client-sub"></p>
+        </div>
+        <button type="button" class="icon-btn" data-close aria-label="Tutup">
+          <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="field span-2">
+            <label for="c-name">Nama perusahaan <span class="req" aria-hidden="true">*</span></label>
+            <input id="c-name" maxlength="140" autocomplete="off" required placeholder="Mis. PT Sinar Abadi">
+            <p class="field-error" id="c-name-err" role="alert"></p>
+          </div>
+
+          <div class="field">
+            <label for="c-pic">Nama PIC client</label>
+            <input id="c-pic" maxlength="100" autocomplete="off" placeholder="Nama kontak utama">
+          </div>
+
+          <div class="field">
+            <label for="c-wa">No WhatsApp</label>
+            <div class="affix">
+              <span class="affix-label" aria-hidden="true">+62</span>
+              <input id="c-wa" inputmode="tel" autocomplete="off" placeholder="812 3456 7890" aria-describedby="c-wa-err">
+            </div>
+            <p class="field-error" id="c-wa-err" role="alert"></p>
+          </div>
+
+          <div class="field span-2">
+            <label for="c-email">Email</label>
+            <input id="c-email" type="email" maxlength="140" autocomplete="off" placeholder="nama@domain.com">
+            <p class="field-error" id="c-email-err" role="alert"></p>
+          </div>
+
+          <div class="field span-2">
+            <label for="c-notes">Catatan client</label>
+            <textarea id="c-notes" rows="2" maxlength="1000" placeholder="Mis. selalu minta penawaran lewat email"></textarea>
+          </div>
+        </div>
+
+        <section class="d-sec" id="client-projects"></section>
+      </div>
+
+      <footer class="modal-foot">
+        <p class="modal-foot-note" id="client-note"></p>
+        <div class="modal-foot-actions">
+          <button type="button" class="btn btn-ghost" data-close>Tutup</button>
+          <button type="submit" class="btn btn-primary" id="client-submit">Simpan client</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Konfirmasi -->
+  <dialog id="dlg-confirm" class="modal modal--sm" aria-labelledby="confirm-title">
+    <form method="dialog" class="modal-inner">
+      <header class="modal-head"><h2 id="confirm-title"></h2></header>
+      <div class="modal-body">
+        <p id="confirm-body" class="confirm-body"></p>
+        <div class="field" id="confirm-type-wrap" hidden>
+          <label for="confirm-type">Ketik <b>yakin</b> untuk menghapus permanen</label>
+          <input id="confirm-type" type="text" autocomplete="off" placeholder="yakin">
+          <p class="field-error" id="confirm-type-err" role="alert"></p>
+        </div>
+        <div class="field" id="confirm-reason-wrap" hidden>
+          <label for="confirm-reason">Alasan <span class="opt">(opsional)</span></label>
+          <textarea id="confirm-reason" rows="3" maxlength="500" placeholder="Mis. anggaran client ditunda ke tahun depan"></textarea>
+        </div>
+      </div>
+      <footer class="modal-foot">
+        <div class="modal-foot-actions">
+          <button type="button" class="btn btn-ghost" data-close>Batal</button>
+          <button class="btn btn-primary" id="confirm-ok" value="ok">OK</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Detail project -->
+  <dialog id="dlg-detail" class="drawer" aria-labelledby="detail-title">
+    <div class="drawer-inner" id="detail-content"></div>
+  </dialog>
+
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+
+  <script src="store.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

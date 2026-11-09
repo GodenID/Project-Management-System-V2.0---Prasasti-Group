@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masuk · Prasasti Group · Project Management System Versi 2.0</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Crect width='22' height='22' rx='3' fill='%231d4fc4'/%3E%3Cpath d='M5.5 11h9M11.5 7.5 15 11l-3.5 3.5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <!-- Font dimuat tanpa memblokir render; bila gagal, stack cadangan dipakai. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" media="print" onload="this.media='all'"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="auth-page">
+  <main class="auth">
+    <!-- Kolom kiri: alur kerja nyata, bukan hero marketing -->
+    <aside class="auth-aside">
+      <a class="brand brand--lg" href="login.html">
+        <span class="brand-name">
+          <b>Prasasti Group</b>
+          <span class="brand-sub">Project Management System</span><span class="ver-pill ver-pill--light">Versi 2.0</span>
+        </span>
+      </a>
+
+      <div class="auth-aside-body">
+        <p class="auth-kicker mono">Pipeline project</p>
+        <h1 class="auth-headline">Lead masuk tidak hilang di tengah jalan.</h1>
+        <p class="auth-sub">Setiap project berjalan satu arah lewat empat tahap. Tahap final terkunci, jadi angka laporan tidak bisa diubah belakangan.</p>
+
+        <ol class="flow">
+          <li class="flow-step">
+            <span class="flow-no mono">01</span>
+            <div>
+              <p class="flow-name">Lead Masuk</p>
+              <p class="flow-desc">Semua project baru masuk di sini, lengkap dengan jenis dan sumber lead.</p>
+            </div>
+          </li>
+          <li class="flow-step">
+            <span class="flow-no mono">02</span>
+            <div>
+              <p class="flow-name">Proses QL</p>
+              <p class="flow-desc">Tahap kualifikasi: penawaran, survei, dan tindak lanjut PIC project.</p>
+            </div>
+          </li>
+          <li class="flow-step">
+            <span class="flow-no mono">03</span>
+            <div>
+              <p class="flow-name">Deal</p>
+              <p class="flow-desc">Disepakati klien. Terkunci, tidak bisa dipindah lagi.</p>
+            </div>
+          </li>
+          <li class="flow-step flow-step--branch">
+            <span class="flow-no mono" aria-hidden="true">↳</span>
+            <div>
+              <p class="flow-name">Tidak Deal</p>
+              <p class="flow-desc">Cabang dari Lead Masuk atau Proses QL, dengan alasan batal tercatat.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+
+      <p class="auth-foot-note">Data tersimpan di browser perangkat ini. Belum ada server, jadi jangan dipakai untuk data klien asli.</p>
+    </aside>
+
+    <!-- Kolom kanan: form -->
+    <section class="auth-main">
+      <div class="auth-card">
+        <div class="auth-mobile-brand">
+          <span class="brand-name">
+            <b>Prasasti Group</b>
+            <span class="brand-sub">Project Management System</span><span class="ver-pill">Versi 2.0</span>
+          </span>
+        </div>
+
+
+        <h2 class="auth-title" id="auth-title">Masuk ke akun tim</h2>
+        <p class="auth-note" id="auth-note">Gunakan username dan password Anda untuk membuka pipeline project. Akun dibuat oleh Admin dari menu Karyawan.</p>
+
+        <form id="auth-form" novalidate>
+
+
+          <div class="field">
+            <label for="a-username">Username <span class="req" aria-hidden="true">*</span></label>
+            <input id="a-username" name="username" type="text" autocomplete="username" maxlength="40" placeholder="mis. mr.goden" required>
+            <p class="field-error" id="a-username-err" role="alert"></p>
+          </div>
+
+          <div class="field">
+            <div class="label-row">
+              <label for="a-password">Password <span class="req" aria-hidden="true">*</span></label>
+              <button type="button" class="link-btn link-btn--sm" id="toggle-pw" aria-pressed="false">Tampilkan</button>
+            </div>
+            <input id="a-password" name="password" type="password" autocomplete="current-password" maxlength="100" placeholder="Minimal 6 karakter" required>
+            <p class="field-error" id="a-password-err" role="alert"></p>
+          </div>
+
+          <label class="check" id="wrap-remember">
+            <input type="checkbox" id="a-remember" checked>
+            <span>Tetap masuk di perangkat ini</span>
+          </label>
+
+          <p class="form-alert" id="form-alert" role="alert"></p>
+
+          <button type="submit" class="btn btn-primary btn-block" id="auth-submit">Masuk</button>
+        </form>
+      </div>
+
+      <footer class="auth-foot">
+        <nav class="auth-legal" aria-label="Dokumen legal">
+          <a href="privacy.html">Privacy Policy</a>
+          <a href="policy.html">Terms &amp; Policy</a>
+          <a href="disclaimer.html">Disclaimer</a>
+        </nav>
+        <p class="auth-copy">Copyright © 2026 Prasasti Group. All rights reserved.</p>
+      </footer>
+    </section>
+  </main>
+
+  <noscript><p class="noscript">Halaman ini membutuhkan JavaScript.</p></noscript>
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+
+  <script src="store.js"></script>
+  <script src="login.js"></script>
+</body>
+</html>
