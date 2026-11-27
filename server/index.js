@@ -468,6 +468,69 @@ app.post('/api/files/delete', { preHandler: authPreHandler }, async (request, re
   return { ok: true, deleted: ids.length };
 });
 
+app.post('/api/projects/delete', { preHandler: authPreHandler }, async (request, reply) => {
+  if (!['admin', 'manager'].includes(request.user.role)) {
+    return reply.code(403).send({ message: 'Hanya Manager atau Admin yang bisa menghapus permanen.' });
+  }
+  const ids = (Array.isArray(request.body?.ids) ? request.body.ids : []).map(String).filter(Boolean);
+  if (!ids.length) return { ok: true, deleted: 0 };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const id of ids) {
+      const docs = await client.query('SELECT file_key FROM documents WHERE project_id = $1', [id]);
+      if (s3) {
+        for (const d of docs.rows) {
+          if (d.file_key) await s3.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: d.file_key }));
+        }
+      }
+      await client.query('DELETE FROM documents WHERE project_id = $1', [id]);
+      await client.query('DELETE FROM project_history WHERE project_id = $1', [id]);
+      await client.query('DELETE FROM project_owners WHERE project_id = $1', [id]);
+      await client.query('DELETE FROM audit_log WHERE project_id = $1', [id]);
+      await client.query('DELETE FROM projects WHERE id = $1', [id]);
+    }
+    await client.query('COMMIT');
+    return { ok: true, deleted: ids.length };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/reset', { preHandler: adminPreHandler }, async () => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const docs = await client.query('SELECT file_key FROM documents');
+    if (s3) {
+      for (const d of docs.rows) {
+        if (d.file_key) await s3.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: d.file_key }));
+      }
+    }
+    await client.query('DELETE FROM documents');
+    await client.query('DELETE FROM project_history');
+    await client.query('DELETE FROM project_owners');
+    await client.query('DELETE FROM audit_log');
+    await client.query('DELETE FROM projects');
+    await client.query('DELETE FROM clients');
+    await client.query('DELETE FROM app_master');
+    await client.query('DELETE FROM number_sequences');
+    await client.query('DELETE FROM idempotency');
+    await client.query('DELETE FROM users WHERE role <> $1', ['admin']);
+    await client.query('DELETE FROM sessions WHERE user_id NOT IN (SELECT id FROM users)');
+    await client.query('COMMIT');
+    return { ok: true };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
 function iso(value) {
   if (!value) return '';
   const d = value instanceof Date ? value : new Date(value);

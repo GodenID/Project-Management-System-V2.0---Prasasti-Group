@@ -188,6 +188,18 @@
     return result.ok;
   }
 
+  async function apiDeleteProjects(ids) {
+    if (!API_MODE) return { ok: true };
+    return api('/api/projects/delete', { method: 'POST', body: { ids } });
+  }
+
+  async function apiResetData() {
+    if (!API_MODE) return { ok: true };
+    const result = await api('/api/reset', { method: 'POST' });
+    await refreshUsers();
+    return result;
+  }
+
   function readJSON(storage, key, fallback) {
     try {
       const raw = storage.getItem(key);
@@ -888,6 +900,8 @@
     deactivateUser,
     restoreUser,
     resetPassword: API_MODE ? apiResetPassword : resetPassword,
+    deleteProjectsPermanently: apiDeleteProjects,
+    resetServerData: apiResetData,
     deleteNonAdminUsers,
     userCount,
     publicUsers,

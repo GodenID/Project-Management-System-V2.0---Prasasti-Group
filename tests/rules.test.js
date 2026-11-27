@@ -202,6 +202,20 @@ test('upload dokumen Deal memakai projectId yang benar', () => {
   assert.doesNotMatch(app, /projectId: id, slot, projectName: p \? p\.name/);
 });
 
+test('hapus permanen dan reset menghapus data di server', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  const store = loadStoreSource();
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  assert.match(app, /await purgeProjects\(/);
+  assert.match(app, /await AlurStore\.deleteProjectsPermanently/);
+  assert.match(app, /await AlurStore\.resetServerData/);
+  assert.match(store, /api\/projects\/delete/);
+  assert.match(store, /api\/reset/);
+  assert.match(server, /app\.post\('\/api\/projects\/delete'/);
+  assert.match(server, /app\.post\('\/api\/reset'/);
+  assert.match(server, /DELETE FROM projects/);
+});
+
 test('401 API menghapus sesi dan memaksa login ulang', () => {
   const store = loadStoreSource();
   assert.match(store, /res\.status === 401 && auth/);

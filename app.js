@@ -4029,12 +4029,14 @@
     toast(`${n} project dipulihkan ke pipeline.`, { tone: 'ok' });
   }
 
-  function purgeProjects(ids) {
+  async function purgeProjects(ids) {
     const list = ids.map(find).filter((p) => p && trashed(p));
     if (!list.length) return 0;
     const idSet = new Set(list.map((p) => p.id));
     const fileIds = list.flatMap(allDocIds);
-    if (fileIds.length) AlurStore.deleteFiles(fileIds);
+    if (fileIds.length) await AlurStore.deleteFiles(fileIds);
+    try { await AlurStore.deleteProjectsPermanently([...idSet]); }
+    catch { /* error sudah tampil di toast; data lokal tetap dibersihkan */ }
     db.audit = db.audit.filter((a) => !idSet.has(a.projectId));
     db.projects = db.projects.filter((p) => !idSet.has(p.id));
     const label = list.slice(0, 5).map((p) => p.qlNo || p.id).join(', ');
@@ -4056,7 +4058,7 @@
       requireText: 'yakin',
     });
     if (!ok) return;
-    purgeProjects([id]);
+    await purgeProjects([id]);
     save();
     render();
     toast(`${p.qlNo || id} dihapus permanen.`);
@@ -4079,7 +4081,7 @@
       requireText: 'yakin',
     });
     if (!ok) return;
-    const n = purgeProjects(ids);
+    const n = await purgeProjects(ids);
     save();
     render();
     toast(`${n} project dihapus permanen.`);
@@ -4097,7 +4099,7 @@
       requireText: 'yakin',
     });
     if (!ok) return;
-    const n = purgeProjects(ids);
+    const n = await purgeProjects(ids);
     save();
     render();
     toast(`${n} project dihapus permanen dari sampah.`);
@@ -4122,7 +4124,9 @@
     });
     if (!ok) return;
     const fileIds = db.projects.flatMap(allDocIds);
-    if (fileIds.length) AlurStore.deleteFiles(fileIds);
+    if (fileIds.length) await AlurStore.deleteFiles(fileIds);
+    try { await AlurStore.resetServerData(); }
+    catch { /* lanjut reset lokal bila server gagal */ }
     const deletedStaff = AlurStore.deleteNonAdminUsers();
     team = AlurStore.publicUsers();
     db.projects = [];
