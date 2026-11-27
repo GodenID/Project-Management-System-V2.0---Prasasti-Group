@@ -2601,6 +2601,8 @@
           <label class="btn btn-sm"><input type="file" data-ql-doc="rab" accept="${DOC_ACCEPT}" class="sr-only">${icon('upload')}Unggah RAB</label>
           <label class="btn btn-sm"><input type="file" data-ql-doc="proposal" accept="${DOC_ACCEPT}" class="sr-only">${icon('upload')}Unggah Proposal</label>
         </div>
+        ${uploadState.ql ? `<p class="doc-busy" aria-live="polite"><span class="spinner"></span>Mengunggah ${uploadState.ql} ke penyimpanan…</p>` : ''}
+        ${DOCS.map((d) => (uploadState.qlError[d.id] ? `<p class="field-error" role="alert">${esc(uploadState.qlError[d.id])}</p>` : '')).join('')}
       </section>` : '';
 
     const dealSection = p.stage === 'deal' ? `<section class="d-sec">
@@ -2928,6 +2930,7 @@
   const dealValue = $('#d-value');
   let dealDocs = {}; // { quotation: {id,name,size,type}, rab: {...} }
   let dealNewFiles = [];
+  const uploadState = { deal: '', ql: '', dealError: {}, qlError: {} };
 
   const fmtBytes = (n) => (n >= 1024 * 1024
     ? `${nf1.format(n / (1024 * 1024))} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
@@ -2938,6 +2941,8 @@
       const need = docNeeded(d, type);
       const revs = docHistoryOf(f);
       const newest = dealNewFiles.includes(f && f.id);
+      const busy = uploadState.deal === d.id;
+      const uploadErr = uploadState.dealError[d.id];
       return `<div class="doc">
         <div class="doc-head">
           <span class="doc-label">${d.label} ${need
@@ -2945,6 +2950,8 @@
         : '<span class="opt">(opsional)</span>'}${f && f.rev ? ` <span class="rev-tag">Rev ${f.rev}</span>` : ''}</span>
           ${f && newest ? `<button type="button" class="link-btn link-btn--sm" data-doc-clear="${d.id}">Batal unggah</button>` : ''}
         </div>
+        ${busy ? `<p class="doc-busy" aria-live="polite"><span class="spinner"></span>Mengunggah ${d.label} ke penyimpanan…</p>` : ''}
+        ${uploadErr ? `<p class="field-error" role="alert">${esc(uploadErr)}</p>` : ''}
         ${f
         ? `<p class="doc-file">${icon('file')}<button type="button" class="doc-name doc-name--link" data-doc-dl="${d.id}">${esc(f.name)}</button><span class="doc-size mono">${fmtBytes(f.size)}</span></p>
            ${revs.length > 1 ? `<p class="doc-revs">${revs.map((r, i) => `<button type="button" class="link-btn link-btn--sm" data-doc-dl="${d.id}:${i}">Rev ${r.rev || i + 1}</button>`).join('')}</p>` : ''}
@@ -2971,6 +2978,8 @@
     dealFormEl.dataset.editing = editing ? '1' : '';
     dealDocs = { ...(p.docs || {}) };
     dealNewFiles = [];
+    uploadState.deal = '';
+    uploadState.dealError = {};
 
     const needRab = rabRequired(p.type);
     $('#deal-title').textContent = editing ? `Nominal & dokumen ${p.qlNo || p.id}` : `Jadikan ${p.qlNo || p.id} Deal`;
@@ -3010,6 +3019,9 @@
       const projectId = dealFormEl.dataset.id;
       const p = find(projectId);
       if (!p) { setErr('d-docs', 'Project tidak ditemukan. Muat ulang halaman.'); return; }
+      uploadState.deal = slot;
+      delete uploadState.dealError[slot];
+      renderDocFields(p.type);
       const meta = await AlurStore.putFile(file, {
         projectId, slot, projectName: p.name, username: user.username,
       });
@@ -3017,9 +3029,14 @@
       const unsaved = dealDocs[slot] && dealNewFiles.includes(dealDocs[slot].id) ? dealDocs[slot] : null;
       dealDocs[slot] = nextRevision(p, slot, meta, unsaved);
       audit(p.id, `doc.${slot}.revision`, `${dealDocs[slot].name} (Rev ${dealDocs[slot].rev})`);
-      renderDocFields(p.type);
+      const label = (DOCS.find((x) => x.id === slot) || {}).label || 'Dokumen';
+      toast(`${label} berhasil diunggah sebagai Revisi ${dealDocs[slot].rev}.`, { tone: 'ok' });
     } catch (err) {
-      setErr('d-docs', `Berkas gagal disimpan: ${err.message}`);
+      uploadState.dealError[slot] = err.message || 'Gagal mengunggah berkas.';
+      setErr('d-docs', `Berkas gagal disimpan: ${uploadState.dealError[slot]}`);
+    } finally {
+      uploadState.deal = '';
+      renderDocFields((find(dealFormEl.dataset.id) || {}).type || '');
     }
   });
 
@@ -4806,15 +4823,24 @@
     if (!p || p.stage !== 'ql' || !can('editDocs', p)) return;
     if (file.size > MAX_DOC_BYTES) { toast(`${file.name} melebihi 10 MB.`, { tone: 'warn' }); return; }
     try {
+      uploadState.ql = slot;
+      delete uploadState.qlError[slot];
+      renderDetail();
       const meta = await AlurStore.putFile(file, {
         projectId: p.id, slot, projectName: p.name, username: user.username,
       });
       p.docs = p.docs || {};
       p.docs[slot] = nextRevision(p, slot, meta);
       audit(p.id, `doc.${slot}.revision`, `${meta.name} (Rev ${p.docs[slot].rev})`);
-      save(); renderDetail();
       toast(`${DOCS.find((d) => d.id === slot).label} tersimpan sebagai Revisi ${p.docs[slot].rev}.`, { tone: 'ok' });
-    } catch (err) { toast(`Gagal unggah: ${err.message}`, { tone: 'warn' }); }
+    } catch (err) {
+      uploadState.qlError[slot] = err.message || 'Gagal mengunggah berkas.';
+      toast(`Gagal unggah: ${uploadState.qlError[slot]}`, { tone: 'warn' });
+    } finally {
+      uploadState.ql = '';
+      renderDetail();
+      save();
+    }
   });
 
   let trashSearchTimer = 0;

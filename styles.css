@@ -754,6 +754,9 @@ main { flex: 1; padding: 22px var(--pad-x) 64px; outline: none; }
 .rev-tag { display: inline-block; padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface); color: var(--ink-3); font: 600 10px/1.5 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; }
 .rev-tag--on { border-color: var(--primary-tint-2); background: var(--primary-tint); color: var(--primary-deep); }
 .doc-revs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px; }
+.doc-busy { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--primary); }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--primary-tint-2); border-top-color: var(--primary); border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .doc-drop--replace { margin-top: 8px; }
 .doc-drop--replace > span { padding: 8px; font-size: 12px; }
 .doc-item--rev { margin-top: -4px; margin-left: 18px; padding: 7px 9px; background: var(--surface); }

@@ -181,6 +181,16 @@ test('setSession tidak menghapus token API saat login', () => {
   assert.match(store, /Jangan hapus token API yang baru dibuat apiLogin/);
 });
 
+test('upload dokumen menampilkan indikator loading', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  assert.match(app, /const uploadState = \{ deal: '', ql: ''/);
+  assert.match(app, /Mengunggah \$\{d\.label\} ke penyimpanan/);
+  assert.match(app, /Mengunggah \$\{uploadState\.ql\} ke penyimpanan/);
+  assert.match(css, /\.spinner \{/);
+  assert.match(css, /@keyframes spin/);
+});
+
 test('upload dokumen Deal memakai projectId yang benar', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
   assert.match(app, /const projectId = dealFormEl\.dataset\.id/);
