@@ -1,5 +1,4 @@
-_v-profile/
+.wrangler/
 node_modules/
 .env
 *.log
-.DS_Store

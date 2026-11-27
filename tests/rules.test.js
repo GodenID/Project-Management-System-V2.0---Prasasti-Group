@@ -154,6 +154,27 @@ test('frontend memakai API mode dan config URL backend', () => {
   assert.match(login, /src="config\.js"/);
 });
 
+test('detail tidak menampilkan Riwayat perubahan field', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.doesNotMatch(app, /Riwayat perubahan field/);
+  assert.doesNotMatch(app, /auditSection/);
+});
+
+test('dokumen tersimpan ke S3/R2 per username dan project', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  const pkg = fs.readFileSync(path.join(__dirname, '..', 'server', 'package.json'), 'utf8');
+  const store = loadStoreSource();
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.match(server, /@aws-sdk\/client-s3/);
+  assert.match(server, /app\.post\('\/api\/files'/);
+  assert.match(server, /app\.get\('\/api\/files\/:id\/url'/);
+  assert.match(server, /safeSegment\(username\)/);
+  assert.match(server, /safeSegment\(project\.rows\[0\]\.name\)/);
+  assert.match(pkg, /@aws-sdk\/client-s3/);
+  assert.match(store, /api\('\/api\/files'/);
+  assert.match(app, /AlurStore\.putFile\(file, \{/);
+});
+
 test('umur di tahap: 3 hari kuning, 7 hari merah', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
   const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');

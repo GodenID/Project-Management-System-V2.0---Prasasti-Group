@@ -3,6 +3,8 @@
 const crypto = require('node:crypto');
 const Fastify = require('fastify');
 const cors = require('@fastify/cors');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { pool, initDb } = require('./db');
 
 const app = Fastify({ logger: true, trustProxy: true });
@@ -13,6 +15,22 @@ app.register(cors, {
 
 const PORT = Number(process.env.PORT || 3000);
 const API_TOKENS = new Set((process.env.API_TOKENS || '').split(',').map((s) => s.trim()).filter(Boolean));
+
+const S3_BUCKET = process.env.S3_BUCKET || '';
+const S3_REGION = process.env.S3_REGION || 'auto';
+const s3 = S3_BUCKET ? new S3Client({
+  region: S3_REGION,
+  endpoint: process.env.S3_ENDPOINT || undefined,
+  credentials: {
+    accessKeyId: process.env.S3_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || '',
+  },
+  forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
+}) : null;
+
+function safeSegment(value) {
+  return String(value || '').trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'tanpa-nama';
+}
 
 const QL_PREFIX = {
   'Prasasti Selaras': 'PSQL',
@@ -337,6 +355,68 @@ app.post('/api/users/:id/reset-password', { preHandler: adminPreHandler }, async
   );
   if (!rowCount) return reply.code(404).send({ message: 'User tidak ditemukan.' });
   return { ok: true };
+});
+
+app.post('/api/files', { preHandler: authPreHandler }, async (request, reply) => {
+  if (!s3) return reply.code(503).send({ message: 'S3 belum dikonfigurasi di server.' });
+  const b = request.body || {};
+  const projectId = String(b.projectId || '');
+  const slot = String(b.slot || '');
+  const name = String(b.name || '');
+  const data = String(b.data || '');
+  if (!projectId || !slot || !name || !data) {
+    return reply.code(400).send({ message: 'projectId, slot, name, dan data wajib.' });
+  }
+  const bytes = Buffer.from(data, 'base64');
+  if (!bytes.length) return reply.code(400).send({ message: 'Berkas kosong.' });
+  if (bytes.length > 10 * 1024 * 1024) return reply.code(400).send({ message: 'Berkas melebihi 10 MB.' });
+  const project = await pool.query('SELECT id, name FROM projects WHERE id = $1', [projectId]);
+  if (!project.rows.length) return reply.code(404).send({ message: 'Project tidak ditemukan.' });
+  const username = String(request.user.username || b.username || 'api');
+  const revRes = await pool.query(
+    'SELECT COALESCE(MAX(rev), 0) + 1 AS rev FROM documents WHERE project_id = $1 AND slot = $2',
+    [projectId, slot],
+  );
+  const rev = Number(revRes.rows[0].rev || 1);
+  const key = `${safeSegment(username)}/${safeSegment(project.rows[0].name)}/${safeSegment(slot)}/rev-${rev}-${safeSegment(name)}`;
+  await s3.send(new PutObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: key,
+    Body: bytes,
+    ContentType: String(b.type || 'application/octet-stream'),
+  }));
+  const id = newId('f');
+  const at = new Date().toISOString();
+  await pool.query(
+    `INSERT INTO documents (id, project_id, slot, rev, file_key, name, size, mime, uploaded_by, uploaded_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [id, projectId, slot, rev, key, name, bytes.length, String(b.type || ''), request.user.id || null, at],
+  );
+  return {
+    id, name, size: bytes.length, type: String(b.type || ''), key, rev, at,
+    by: request.user.id || '', username,
+  };
+});
+
+app.get('/api/files/:id/url', { preHandler: authPreHandler }, async (request, reply) => {
+  if (!s3) return reply.code(503).send({ message: 'S3 belum dikonfigurasi di server.' });
+  const { rows } = await pool.query('SELECT * FROM documents WHERE id = $1', [request.params.id]);
+  if (!rows.length) return reply.code(404).send({ message: 'Berkas tidak ditemukan.' });
+  const doc = rows[0];
+  const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: S3_BUCKET, Key: doc.file_key }), { expiresIn: 600 });
+  return { url, name: doc.name, type: doc.mime || '' };
+});
+
+app.post('/api/files/delete', { preHandler: authPreHandler }, async (request, reply) => {
+  if (!s3) return reply.code(503).send({ message: 'S3 belum dikonfigurasi di server.' });
+  const ids = Array.isArray(request.body?.ids) ? request.body.ids : [];
+  for (const id of ids) {
+    const { rows } = await pool.query('SELECT file_key FROM documents WHERE id = $1', [id]);
+    if (!rows.length || !rows[0].file_key) continue;
+    await s3.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: rows[0].file_key }));
+    await pool.query('DELETE FROM documents WHERE id = $1', [id]);
+  }
+  return { ok: true, deleted: ids.length };
 });
 
 function iso(value) {

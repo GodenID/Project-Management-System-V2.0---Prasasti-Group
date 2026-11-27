@@ -537,9 +537,41 @@
     });
   }
 
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = String(reader.result || '');
+        const comma = text.indexOf(',');
+        resolve(comma >= 0 ? text.slice(comma + 1) : text);
+      };
+      reader.onerror = () => reject(reader.error || new Error('Gagal membaca berkas.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function apiFileUrl(meta) {
+    const res = await api(`/api/files/${encodeURIComponent(meta.id)}/url`);
+    return res.url;
+  }
+
   // Menyimpan File apa adanya. Yang dikembalikan hanya metadata untuk disimpan
   // bersama data project.
-  async function putFile(file) {
+  async function putFile(file, context = {}) {
+    if (API_MODE && apiToken()) {
+      return api('/api/files', {
+        method: 'POST',
+        body: {
+          projectId: context.projectId || '',
+          slot: context.slot || '',
+          name: file.name,
+          size: file.size,
+          type: file.type || '',
+          username: context.username || (currentUser() || {}).username || '',
+          data: await fileToBase64(file),
+        },
+      });
+    }
     const id = `f-${randomHex(10)}`;
     await fileTx('readwrite', (store) => store.put({
       id, name: file.name, size: file.size, type: file.type, at: new Date().toISOString(), blob: file,
@@ -552,6 +584,11 @@
   async function deleteFiles(ids) {
     const list = (ids || []).filter(Boolean);
     if (!list.length) return;
+    if (API_MODE && apiToken()) {
+      try { await api('/api/files/delete', { method: 'POST', body: { ids: list } }); }
+      catch { /* penghapusan gagal tidak membatalkan pekerjaan */ }
+      return;
+    }
     try {
       await fileTx('readwrite', (store) => {
         list.forEach((id) => store.delete(id));
@@ -565,6 +602,15 @@
   // Memicu unduhan tanpa menyimpan object URL di DOM.
   async function downloadFile(meta) {
     if (!meta) return false;
+    if (API_MODE && apiToken() && meta.id && !meta.dataUrl) {
+      try {
+        const url = await apiFileUrl(meta);
+        const a = document.createElement('a');
+        a.href = url; a.download = meta.name || 'berkas';
+        document.body.appendChild(a); a.click(); a.remove();
+        return true;
+      } catch { return false; }
+    }
     let url = meta.dataUrl || '';   // berkas lama masih tersimpan sebagai data URL
     let revoke = false;
     if (!url && meta.id) {
@@ -596,6 +642,13 @@
   // Preview PDF/gambar di tab baru. Return true bila dibuka, false bila tidak bisa.
   async function previewFile(meta) {
     if (!meta) return false;
+    if (API_MODE && apiToken() && meta.id && !meta.dataUrl) {
+      if (!isPreviewable(meta)) return false;
+      try {
+        const url = await apiFileUrl(meta);
+        return Boolean(window.open(url, '_blank', 'noopener,noreferrer'));
+      } catch { return false; }
+    }
     let url = meta.dataUrl || '';
     let revoke = false;
     let type = meta.type || '';

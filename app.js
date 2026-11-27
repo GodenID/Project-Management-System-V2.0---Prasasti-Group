@@ -2668,13 +2668,6 @@
         </div>
       </li>`).reverse().join('');
 
-    const auditRows = db.audit.filter((a) => a.projectId === p.id).slice().reverse().slice(0, 50);
-    const auditSection = auditRows.length ? `<section class="d-sec"><h3>Riwayat perubahan field</h3>
-      <ol class="timeline">${auditRows.map((a) => `<li><span class="tl-mark" style="background:var(--primary)" aria-hidden="true"></span>
-        <div><p class="tl-stage">${esc(a.action)}${a.detail ? ` — <span class="muted">${esc(a.detail)}</span>` : ''}</p>
-        <time class="tl-time mono" datetime="${esc(a.at)}">${dTime.format(new Date(a.at))}</time>
-        <p class="tl-by">oleh ${esc(a.byName || teamName(a.by))}</p></div></li>`).join('')}</ol></section>`
-      : '<section class="d-sec"><h3>Riwayat perubahan field</h3><p class="muted">Belum ada perubahan tercatat.</p></section>';
     const history = fieldHistory;
 
     const hadFocus = dlgDetail.contains(document.activeElement);
@@ -2702,7 +2695,6 @@
         ${p.desc ? `<section class="d-sec"><h3>Deskripsi</h3><p class="notes">${esc(p.desc)}</p></section>` : ''}
         <section class="d-sec"><h3>PIC project</h3>${ownerList}</section>
         <section class="d-sec"><h3>Riwayat tahap</h3><ol class="timeline">${history}</ol></section>
-        ${auditSection}
       </div>
       <footer class="drawer-foot">
         ${can('deleteProject', p)
@@ -3015,9 +3007,11 @@
       return;
     }
     try {
-      const meta = await AlurStore.putFile(file);
-      dealNewFiles.push(meta.id);
       const p = find(dealFormEl.dataset.id);
+      const meta = await AlurStore.putFile(file, {
+        projectId: id, slot, projectName: p ? p.name : '', username: user.username,
+      });
+      dealNewFiles.push(meta.id);
       const unsaved = dealDocs[slot] && dealNewFiles.includes(dealDocs[slot].id) ? dealDocs[slot] : null;
       dealDocs[slot] = nextRevision(p, slot, meta, unsaved);
       audit(p.id, `doc.${slot}.revision`, `${dealDocs[slot].name} (Rev ${dealDocs[slot].rev})`);
@@ -4810,7 +4804,9 @@
     if (!p || p.stage !== 'ql' || !can('editDocs', p)) return;
     if (file.size > MAX_DOC_BYTES) { toast(`${file.name} melebihi 10 MB.`, { tone: 'warn' }); return; }
     try {
-      const meta = await AlurStore.putFile(file);
+      const meta = await AlurStore.putFile(file, {
+        projectId: p.id, slot, projectName: p.name, username: user.username,
+      });
       p.docs = p.docs || {};
       p.docs[slot] = nextRevision(p, slot, meta);
       audit(p.id, `doc.${slot}.revision`, `${meta.name} (Rev ${p.docs[slot].rev})`);
