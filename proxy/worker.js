@@ -1,7 +1,9 @@
 const encoder = new TextEncoder();
 
-function hex(buffer) {
-  return Array.from(new Uint8Array(buffer), (b) => b.toString(16).padStart(2, '0')).join('');
+function base64Url(buffer) {
+  let binary = '';
+  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function base64DecodeUrl(value) {
@@ -13,7 +15,7 @@ async function sign(payload, secret) {
   const key = await crypto.subtle.importKey(
     'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   );
-  return hex(await crypto.subtle.sign('HMAC', key, encoder.encode(payload)));
+  return base64Url(await crypto.subtle.sign('HMAC', key, encoder.encode(payload)));
 }
 
 async function handle(request, env) {

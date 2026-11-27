@@ -261,6 +261,8 @@ test('tautan dokumen memakai domain proxy, bukan S3 mentah', () => {
   assert.match(server, /signDocToken/);
   assert.match(server, /docs\.prasastigroup\.id/);
   assert.match(worker, /DOC_PROXY_SECRET/);
+  assert.match(worker, /function base64Url/);
+  assert.match(server, /digest\('base64url'\)/);
   assert.match(worker, /s3\.ap-southeast-1\.onidel\.cloud/);
   assert.match(config, /docs\.prasastigroup\.id\/\*/);
 });
