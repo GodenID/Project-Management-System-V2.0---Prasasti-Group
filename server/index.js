@@ -32,6 +32,7 @@ app.register(cors, {
 
 const PORT = Number(process.env.PORT || 3000);
 const API_TOKENS = new Set((process.env.API_TOKENS || '').split(',').map((s) => s.trim()).filter(Boolean));
+const ACCESS_TTL_MS = 60 * 60 * 1000;
 
 const S3_BUCKET = process.env.S3_BUCKET || '';
 const S3_REGION = process.env.S3_REGION || 'auto';
@@ -118,7 +119,8 @@ async function authPreHandler(request, reply) {
   }
   const { rows } = await pool.query(
     `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
-     WHERE s.token_hash = $1 AND u.deleted_at IS NULL`,
+     WHERE s.token_hash = $1 AND u.deleted_at IS NULL
+       AND (s.expires_at IS NULL OR s.expires_at > now())`,
     [sha256(token)],
   );
   if (!rows.length) return reply.code(401).send({ message: 'Token tidak valid.' });
@@ -165,8 +167,33 @@ app.post('/api/auth/login', async (request, reply) => {
     return reply.code(401).send({ message: 'Username atau password salah.' });
   }
   const token = crypto.randomBytes(32).toString('hex');
-  await pool.query('INSERT INTO sessions (token_hash, user_id) VALUES ($1, $2)', [sha256(token), user.id]);
-  return { token, user: publicUser(user) };
+  const refreshToken = crypto.randomBytes(32).toString('hex');
+  const expires = new Date(Date.now() + ACCESS_TTL_MS);
+  await pool.query(
+    'INSERT INTO sessions (token_hash, refresh_hash, user_id, expires_at) VALUES ($1,$2,$3,$4)',
+    [sha256(token), sha256(refreshToken), user.id, expires],
+  );
+  return { token, refreshToken, expiresIn: ACCESS_TTL_MS / 1000, user: publicUser(user) };
+});
+
+app.post('/api/auth/refresh', async (request, reply) => {
+  const refreshToken = String(request.body?.refreshToken || '');
+  if (!refreshToken) return reply.code(401).send({ message: 'Refresh token wajib.' });
+  const { rows } = await pool.query(
+    `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+     WHERE s.refresh_hash = $1 AND u.deleted_at IS NULL`,
+    [sha256(refreshToken)],
+  );
+  if (!rows.length) return reply.code(401).send({ message: 'Sesi berakhir. Silakan login ulang.' });
+  const token = crypto.randomBytes(32).toString('hex');
+  const nextRefresh = crypto.randomBytes(32).toString('hex');
+  await pool.query(
+    'UPDATE sessions SET token_hash = $1, refresh_hash = $2, expires_at = $3 WHERE refresh_hash = $4',
+    [sha256(token), sha256(nextRefresh), new Date(Date.now() + ACCESS_TTL_MS), sha256(refreshToken)],
+  );
+  return {
+    token, refreshToken: nextRefresh, expiresIn: ACCESS_TTL_MS / 1000, user: publicUser(rows[0]),
+  };
 });
 
 app.get('/api/auth/me', { preHandler: authPreHandler }, async (request) => ({ user: publicUser(request.user) }));
@@ -367,6 +394,11 @@ app.patch('/api/users/:id', { preHandler: authPreHandler }, async (request, repl
   const { rowCount } = await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
   if (!rowCount) return reply.code(404).send({ message: 'User tidak ditemukan.' });
   return { ok: true };
+});
+
+app.post('/api/users/:id/revoke-sessions', { preHandler: adminPreHandler }, async (request) => {
+  const { rowCount } = await pool.query('DELETE FROM sessions WHERE user_id = $1', [request.params.id]);
+  return { ok: true, revoked: rowCount };
 });
 
 app.post('/api/auth/verify', { preHandler: authPreHandler }, async (request) => {

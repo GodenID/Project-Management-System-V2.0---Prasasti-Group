@@ -41,7 +41,9 @@
   const API_BASE = String(global.PMS_API_URL || '').replace(/\/$/, '');
   const API_MODE = Boolean(API_BASE);
   const API_TOKEN_KEY = 'alur:api-token:v1';
+  const API_REFRESH_KEY = 'alur:api-refresh:v1';
   const API_USER_KEY = 'alur:api-user:v1';
+  let apiRemember = false;
   let snapshotCache = null;
   let syncRev = 0;
   let syncTimer = 0;
@@ -51,14 +53,24 @@
     return localStorage.getItem(API_TOKEN_KEY) || sessionStorage.getItem(API_TOKEN_KEY) || '';
   }
 
-  function setApiToken(token, remember) {
-    localStorage.removeItem(API_TOKEN_KEY);
-    sessionStorage.removeItem(API_TOKEN_KEY);
-    if (!token) return;
-    (remember ? localStorage : sessionStorage).setItem(API_TOKEN_KEY, token);
+  function refreshToken() {
+    return localStorage.getItem(API_REFRESH_KEY) || sessionStorage.getItem(API_REFRESH_KEY) || '';
   }
 
-  async function api(path, { method = 'GET', body = null, auth = true } = {}) {
+  function setApiToken(token, remember, refresh) {
+    apiRemember = remember === undefined
+      ? Boolean(localStorage.getItem(API_TOKEN_KEY)) : Boolean(remember);
+    localStorage.removeItem(API_TOKEN_KEY);
+    sessionStorage.removeItem(API_TOKEN_KEY);
+    localStorage.removeItem(API_REFRESH_KEY);
+    sessionStorage.removeItem(API_REFRESH_KEY);
+    if (!token) return;
+    const target = apiRemember ? localStorage : sessionStorage;
+    target.setItem(API_TOKEN_KEY, token);
+    if (refresh) target.setItem(API_REFRESH_KEY, refresh);
+  }
+
+  async function api(path, { method = 'GET', body = null, auth = true } = {}, retried = false) {
     const headers = { Accept: 'application/json' };
     if (body !== null) headers['Content-Type'] = 'application/json';
     const token = apiToken();
@@ -81,6 +93,18 @@
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    if (!res.ok && res.status === 401 && auth && !retried) {
+      const refresh = refreshToken();
+      if (refresh) {
+        try {
+          const fresh = await api('/api/auth/refresh', {
+            method: 'POST', body: { refreshToken: refresh }, auth: false,
+          });
+          setApiToken(fresh.token, undefined, fresh.refreshToken);
+          return await api(path, { method, body, auth }, true);
+        } catch { /* refresh gagal, lanjut kelogout */ }
+      }
+    }
     if (!res.ok) {
       if (res.status === 401 && auth) {
         clearSession();
@@ -153,7 +177,7 @@
         method: 'POST', body: { username: normUsername(username), password }, auth: false,
       });
       clearLoginFails();
-      setApiToken(data.token, remember);
+      setApiToken(data.token, remember, data.refreshToken);
       writeJSON(remember ? localStorage : sessionStorage, API_USER_KEY, data.user);
       await refreshUsers();
       return data.user;
@@ -183,6 +207,16 @@
     await refreshUsers();
     const me = readJSON(localStorage, API_USER_KEY, null);
     if (me && me.id === id && payload.password) me.mustChangePassword = false;
+    return result;
+  }
+
+  async function apiRevokeSessions(id) {
+    if (!API_MODE) return { ok: false, revoked: 0 };
+    const result = await api(`/api/users/${encodeURIComponent(id)}/revoke-sessions`, { method: 'POST' });
+    if (id === (currentUser() || {}).id) {
+      clearSession();
+      if (global.location) global.location.replace('login.html');
+    }
     return result;
   }
 
@@ -527,6 +561,8 @@
     sessionStorage.removeItem(KEYS.session);
     localStorage.removeItem(API_TOKEN_KEY);
     sessionStorage.removeItem(API_TOKEN_KEY);
+    localStorage.removeItem(API_REFRESH_KEY);
+    sessionStorage.removeItem(API_REFRESH_KEY);
     localStorage.removeItem(API_USER_KEY);
     sessionStorage.removeItem(API_USER_KEY);
   }
@@ -728,10 +764,15 @@
     if (!meta) return false;
     if (API_MODE && apiToken() && meta.id && !meta.dataUrl) {
       if (!isPreviewable(meta)) return false;
+      const win = window.open('', '_blank');
+      if (!win) return false;
+      win.opener = null;
       try {
         const url = await apiFileUrl(meta);
-        return Boolean(window.open(url, '_blank', 'noopener,noreferrer'));
+        win.location.replace(url);
+        return true;
       } catch (err) {
+        win.close();
         throw new Error(err.message || 'Gagal membuka berkas dari server.');
       }
     }
@@ -982,6 +1023,7 @@
     restoreUser,
     resetPassword: API_MODE ? apiResetPassword : resetPassword,
     deleteUser: API_MODE ? apiDeleteUser : null,
+    revokeSessions: apiRevokeSessions,
     deleteProjectsPermanently: apiDeleteProjects,
     resetServerData: apiResetData,
     deleteNonAdminUsers,

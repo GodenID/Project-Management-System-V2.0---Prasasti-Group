@@ -2431,6 +2431,7 @@
         ${admin && !isMe ? (inactive
           ? `<button type="button" class="btn btn-sm btn-soft" data-action="restore-user" data-id="${esc(u.id)}">Aktifkan lagi</button>`
           : `<button type="button" class="btn btn-sm btn-quiet" data-action="deactivate-user" data-id="${esc(u.id)}">Nonaktifkan</button>`) : ''}
+        ${admin && !isMe ? `<button type="button" class="btn btn-sm btn-quiet" data-action="revoke-sessions" data-id="${esc(u.id)}">Cabut sesi</button>` : ''}
         ${admin && !isMe ? `<button type="button" class="btn btn-sm btn-text-danger" data-action="delete-user" data-id="${esc(u.id)}">Hapus akun</button>` : ''}
       </div></td>
     </tr>`;
@@ -4642,6 +4643,24 @@
           audit('', 'user.restore', targetId);
           save(); render();
           toast('Akun diaktifkan lagi.', { tone: 'ok' });
+        }
+      }
+      else if (a === 'revoke-sessions') {
+        const targetId = act.dataset.id;
+        const target = team.find((u) => u.id === targetId);
+        if (!can('manageUsers') || targetId === user.id) {
+          toast(denyReason('manageUsers'), { tone: 'warn' });
+        } else {
+          const ok = await confirmDialog({
+            title: `Cabut sesi ${target.name}?`,
+            body: 'Semua perangkat yang sedang login akan diminta masuk lagi. Karyawan ini tidak dihapus.',
+            okLabel: 'Cabut sesi', tone: 'danger',
+          });
+          if (!ok) return;
+          try {
+            const res = await AlurStore.revokeSessions(targetId);
+            toast(`Sesi ${target.name} dicabut (${res.revoked} perangkat).`, { tone: 'ok' });
+          } catch (err) { toast(err.message, { tone: 'warn' }); }
         }
       }
       else if (a === 'delete-user') {

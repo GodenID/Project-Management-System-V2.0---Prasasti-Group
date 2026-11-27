@@ -320,6 +320,28 @@ test('proxy membedakan unduhan dan preview', () => {
   assert.ok(store.includes("apiFileUrl(meta, 'download')"));
 });
 
+test('token bisa di-refresh dan sesi bisa dicabut admin', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'server', 'schema.sql'), 'utf8');
+  const store = loadStoreSource();
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.ok(schema.includes('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS refresh_hash'));
+  assert.ok(schema.includes('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS expires_at'));
+  assert.ok(server.includes("app.post('/api/auth/refresh'"));
+  assert.ok(server.includes("app.post('/api/users/:id/revoke-sessions'"));
+  assert.ok(server.includes('s.expires_at > now()'));
+  assert.ok(store.includes('setApiToken(fresh.token, undefined, fresh.refreshToken)'));
+  assert.ok(store.includes('revokeSessions: apiRevokeSessions'));
+  assert.ok(app.includes('data-action="revoke-sessions"'));
+});
+
+test('klik lihat membuka PDF di tab baru, bukan mengunduh', () => {
+  const store = loadStoreSource();
+  assert.ok(store.includes("const win = window.open('', '_blank')"));
+  assert.ok(store.includes('win.location.replace(url)'));
+  assert.ok(store.includes("apiFileUrl(meta, 'download')"));
+});
+
 test('401 API menghapus sesi dan memaksa login ulang', () => {
   const store = loadStoreSource();
   assert.match(store, /res\.status === 401 && auth/);
