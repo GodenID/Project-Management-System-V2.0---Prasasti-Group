@@ -250,10 +250,10 @@ test('tautan dokumen memakai domain proxy, bukan S3 mentah', () => {
   const config = fs.readFileSync(path.join(__dirname, '..', 'proxy', 'wrangler.toml'), 'utf8');
   assert.match(server, /DOC_PROXY_HOST/);
   assert.match(server, /signDocToken/);
-  assert.match(server, /dokumen\.pms\.prasastigroup\.id/);
+  assert.match(server, /docs\.prasastigroup\.id/);
   assert.match(worker, /DOC_PROXY_SECRET/);
   assert.match(worker, /s3\.ap-southeast-1\.onidel\.cloud/);
-  assert.match(config, /dokumen\.pms\.prasastigroup\.id\/\*/);
+  assert.match(config, /docs\.prasastigroup\.id\/\*/);
 });
 
 test('401 API menghapus sesi dan memaksa login ulang', () => {

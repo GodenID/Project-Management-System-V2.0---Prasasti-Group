@@ -19,7 +19,7 @@ const API_TOKENS = new Set((process.env.API_TOKENS || '').split(',').map((s) => 
 const S3_BUCKET = process.env.S3_BUCKET || '';
 const S3_REGION = process.env.S3_REGION || 'auto';
 const DOC_PROXY_SECRET = process.env.DOC_PROXY_SECRET || '';
-const DOC_PROXY_HOST = process.env.DOC_PROXY_HOST || 'https://dokumen.pms.prasastigroup.id';
+const DOC_PROXY_HOST = process.env.DOC_PROXY_HOST || 'https://docs.prasastigroup.id';
 
 function signDocToken(s3Url) {
   const payload = Buffer.from(JSON.stringify({ u: s3Url, e: Date.now() + 10 * 60 * 1000 }))
