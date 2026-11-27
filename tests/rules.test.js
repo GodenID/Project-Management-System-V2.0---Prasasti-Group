@@ -282,6 +282,40 @@ test('tautan dokumen memakai domain proxy, bukan S3 mentah', () => {
   assert.match(config, /docs\.prasastigroup\.id\/\*/);
 });
 
+test('sync memakai nomor versi dan menolak data lama', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'server', 'schema.sql'), 'utf8');
+  const store = loadStoreSource();
+  assert.ok(schema.includes('CREATE TABLE IF NOT EXISTS sync_state'));
+  assert.ok(server.includes("SELECT rev FROM sync_state WHERE key = 'main' FOR UPDATE"));
+  assert.ok(server.includes('Number(body.baseRev) !== rev'));
+  assert.ok(store.includes('ready.baseRev = syncRev'));
+  assert.ok(store.includes('err.status === 409'));
+});
+
+test('backend punya health check dan metrik', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  assert.ok(server.includes("app.get('/health'"));
+  assert.ok(server.includes("app.get('/metrics'"));
+  assert.ok(server.includes('pms_requests_total'));
+});
+
+test('rekonsiliasi S3 menghapus objek yatim', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  assert.ok(server.includes('ListObjectsV2Command'));
+  assert.ok(server.includes('DeleteObjectsCommand'));
+  assert.ok(server.includes("app.post('/api/files/reconcile'"));
+});
+
+test('proxy membedakan unduhan dan preview', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  const worker = fs.readFileSync(path.join(__dirname, '..', 'proxy', 'worker.js'), 'utf8');
+  const store = loadStoreSource();
+  assert.ok(server.includes("request.query?.mode === 'download'"));
+  assert.ok(worker.includes("data.d ? 'attachment' : 'inline'"));
+  assert.ok(store.includes("apiFileUrl(meta, 'download')"));
+});
+
 test('401 API menghapus sesi dan memaksa login ulang', () => {
   const store = loadStoreSource();
   assert.match(store, /res\.status === 401 && auth/);

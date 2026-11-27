@@ -121,3 +121,9 @@ CREATE TABLE IF NOT EXISTS app_master (
   value JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS sync_state (
+  key TEXT PRIMARY KEY,
+  rev BIGINT NOT NULL DEFAULT 0
+);
+INSERT INTO sync_state (key, rev) VALUES ('main', 0) ON CONFLICT (key) DO NOTHING;

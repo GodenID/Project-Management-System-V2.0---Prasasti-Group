@@ -43,6 +43,7 @@
   const API_TOKEN_KEY = 'alur:api-token:v1';
   const API_USER_KEY = 'alur:api-user:v1';
   let snapshotCache = null;
+  let syncRev = 0;
   let syncTimer = 0;
   let syncChain = Promise.resolve();
 
@@ -103,6 +104,7 @@
     try {
       const snapshot = await api('/api/snapshot');
       snapshotCache = snapshot;
+      syncRev = Number(snapshot.syncRev || 0);
       if (Array.isArray(snapshot.users)) writeJSON(localStorage, KEYS.users, snapshot.users);
       writeJSON(localStorage, KEYS.data, snapshot);
       // Antre sinkron sekali saat buka: migrasi dokumen lama ke S3 bila perlu.
@@ -138,6 +140,7 @@
     try {
       const snapshot = await api('/api/snapshot');
       snapshotCache = snapshot;
+      syncRev = Number(snapshot.syncRev || 0);
       if (Array.isArray(snapshot.users)) writeJSON(localStorage, KEYS.users, snapshot.users);
       writeJSON(localStorage, KEYS.data, snapshot);
     } catch { /* pakai cache lokal */ }
@@ -593,8 +596,9 @@
     });
   }
 
-  async function apiFileUrl(meta) {
-    const res = await api(`/api/files/${encodeURIComponent(meta.id)}/url`);
+  async function apiFileUrl(meta, mode = '') {
+    const q = mode ? `?mode=${encodeURIComponent(mode)}` : '';
+    const res = await api(`/api/files/${encodeURIComponent(meta.id)}/url${q}`);
     return res.url;
   }
 
@@ -631,18 +635,22 @@
         const signed = await api('/api/files/presign', { method: 'POST', body: payload });
         if (signed && signed.url) {
           await putDirect(signed.url, file, file.type || '', onProgress);
-          return api('/api/files/confirm', {
+          const confirmed = await api('/api/files/confirm', {
             method: 'POST',
             body: { ...payload, id: signed.id, key: signed.key, rev: signed.rev },
           });
+          if (confirmed && confirmed.syncRev) syncRev = Number(confirmed.syncRev);
+          return confirmed;
         }
       } catch (err) {
         // S3 direkt gagal (misal CORS). Fallback lewat backend memakai base64.
       }
-      return api('/api/files', {
+      const uploaded = await api('/api/files', {
         method: 'POST',
         body: { ...payload, data: await fileToBase64(file) },
       });
+      if (uploaded && uploaded.syncRev) syncRev = Number(uploaded.syncRev);
+      return uploaded;
     }
     const id = `f-${randomHex(10)}`;
     await fileTx('readwrite', (store) => store.put({
@@ -657,8 +665,10 @@
     const list = (ids || []).filter(Boolean);
     if (!list.length) return;
     if (API_MODE && apiToken()) {
-      try { await api('/api/files/delete', { method: 'POST', body: { ids: list } }); }
-      catch { /* penghapusan gagal tidak membatalkan pekerjaan */ }
+      try {
+        const res = await api('/api/files/delete', { method: 'POST', body: { ids: list } });
+        if (res && res.syncRev) syncRev = Number(res.syncRev);
+      } catch { /* penghapusan gagal tidak membatalkan pekerjaan */ }
       return;
     }
     try {
@@ -676,7 +686,7 @@
     if (!meta) return false;
     if (API_MODE && apiToken() && meta.id && !meta.dataUrl) {
       try {
-        const url = await apiFileUrl(meta);
+        const url = await apiFileUrl(meta, 'download');
         const a = document.createElement('a');
         a.href = url; a.download = meta.name || 'berkas';
         document.body.appendChild(a); a.click(); a.remove();
@@ -931,11 +941,19 @@
       syncChain = syncChain
         .then(async () => {
           const ready = await prepareSyncPayload(data);
+          ready.baseRev = syncRev;
           writeJSON(localStorage, KEYS.data, data);
-          return api('/api/sync', { method: 'POST', body: ready });
+          const res = await api('/api/sync', { method: 'POST', body: ready });
+          if (res && res.syncRev) syncRev = Number(res.syncRev);
+          return res;
         })
-        .catch((err) => {
+        .catch(async (err) => {
           console.error('Sinkronisasi ke API gagal:', err);
+          if (err.status === 409) {
+            global.dispatchEvent(new CustomEvent('alur:sync-error', { detail: { message: err.message } }));
+            if (global.location) global.location.reload();
+            return;
+          }
           if (typeof global.dispatchEvent === 'function') {
             global.dispatchEvent(new CustomEvent('alur:sync-error', { detail: { message: err.message } }));
           }

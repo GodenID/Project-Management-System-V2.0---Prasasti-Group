@@ -3,11 +3,28 @@
 const crypto = require('node:crypto');
 const Fastify = require('fastify');
 const cors = require('@fastify/cors');
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const {
+  S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand,
+  ListObjectsV2Command, DeleteObjectsCommand,
+} = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { pool, initDb } = require('./db');
 
 const app = Fastify({ logger: true, trustProxy: true });
+
+const metrics = { requests: 0, errors: 0, startedAt: Date.now() };
+app.addHook('onRequest', async () => { metrics.requests += 1; });
+app.addHook('onError', async () => { metrics.errors += 1; });
+
+async function currentRev(client = pool) {
+  const { rows } = await client.query("SELECT rev FROM sync_state WHERE key = 'main'");
+  return rows.length ? Number(rows[0].rev) : 0;
+}
+async function bumpRev(client = pool) {
+  await client.query("UPDATE sync_state SET rev = rev + 1 WHERE key = 'main'");
+  return currentRev(client);
+}
+
 app.register(cors, {
   origin: (process.env.FRONTEND_ORIGIN || '*').split(',').map((s) => s.trim()).filter(Boolean),
   credentials: true,
@@ -21,9 +38,11 @@ const S3_REGION = process.env.S3_REGION || 'auto';
 const DOC_PROXY_SECRET = process.env.DOC_PROXY_SECRET || '';
 const DOC_PROXY_HOST = process.env.DOC_PROXY_HOST || 'https://docs.prasastigroup.id';
 
-function signDocToken(s3Url) {
-  const payload = Buffer.from(JSON.stringify({ u: s3Url, e: Date.now() + 10 * 60 * 1000 }))
-    .toString('base64url');
+function signDocToken(s3Url, opts = {}) {
+  const payload = Buffer.from(JSON.stringify({
+    u: s3Url, e: Date.now() + 10 * 60 * 1000,
+    d: Boolean(opts.d), n: String(opts.n || '').slice(0, 180),
+  })).toString('base64url');
   const sig = crypto.createHmac('sha256', DOC_PROXY_SECRET).update(payload).digest('base64url');
   return `${payload}.${sig}`;
 }
@@ -428,7 +447,7 @@ app.post('/api/files', { preHandler: authPreHandler }, async (request, reply) =>
   );
   return {
     id, name, size: bytes.length, type: String(b.type || ''), key, rev, at,
-    by: request.user.id || '', username,
+    by: request.user.id || '', username, syncRev: await bumpRev(),
   };
 });
 
@@ -477,7 +496,7 @@ app.post('/api/files/confirm', { preHandler: authPreHandler }, async (request, r
   );
   return {
     id, key, rev: Number(b.rev || 1), name: b.name || '', size: Number(b.size || 0),
-    type: b.type || '', at, by: request.user.id || '',
+    type: b.type || '', at, by: request.user.id || '', syncRev: await bumpRev(),
   };
 });
 
@@ -490,8 +509,9 @@ app.get('/api/files/:id/url', { preHandler: authPreHandler }, async (request, re
     return reply.code(409).send({ message: 'Dokumen lama belum termigrasi ke S3. Simpan/muat ulang project sekali lagi.' });
   }
   const s3Url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: S3_BUCKET, Key: doc.file_key }), { expiresIn: 600 });
+  const download = request.query?.mode === 'download';
   const url = DOC_PROXY_SECRET
-    ? `${DOC_PROXY_HOST}/f/${encodeURIComponent(doc.id)}?t=${encodeURIComponent(signDocToken(s3Url))}`
+    ? `${DOC_PROXY_HOST}/f/${encodeURIComponent(doc.id)}?t=${encodeURIComponent(signDocToken(s3Url, { d: download, n: doc.name }))}`
     : s3Url;
   return { url, name: doc.name, type: doc.mime || '' };
 });
@@ -505,7 +525,7 @@ app.post('/api/files/delete', { preHandler: authPreHandler }, async (request, re
     await s3.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: rows[0].file_key }));
     await pool.query('DELETE FROM documents WHERE id = $1', [id]);
   }
-  return { ok: true, deleted: ids.length };
+  return { ok: true, deleted: ids.length, syncRev: await bumpRev() };
 });
 
 app.post('/api/projects/delete', { preHandler: authPreHandler }, async (request, reply) => {
@@ -530,8 +550,9 @@ app.post('/api/projects/delete', { preHandler: authPreHandler }, async (request,
       await client.query('DELETE FROM audit_log WHERE project_id = $1', [id]);
       await client.query('DELETE FROM projects WHERE id = $1', [id]);
     }
+    const nextRev = await bumpRev(client);
     await client.query('COMMIT');
-    return { ok: true, deleted: ids.length };
+    return { ok: true, deleted: ids.length, syncRev: nextRev };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -561,8 +582,9 @@ app.post('/api/reset', { preHandler: adminPreHandler }, async () => {
     await client.query('DELETE FROM idempotency');
     await client.query('DELETE FROM users WHERE role <> $1', ['admin']);
     await client.query('DELETE FROM sessions WHERE user_id NOT IN (SELECT id FROM users)');
+    const nextRev = await bumpRev(client);
     await client.query('COMMIT');
-    return { ok: true };
+    return { ok: true, syncRev: nextRev };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -665,6 +687,7 @@ async function getSnapshot() {
   }
 
   return {
+    syncRev: await currentRev(),
     seq: projects.rows.length,
     qlSeq: {},
     poSeq: 0,
@@ -695,6 +718,14 @@ app.post('/api/sync', { preHandler: authPreHandler }, async (request, reply) => 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query("SELECT rev FROM sync_state WHERE key = 'main' FOR UPDATE");
+    const rev = await currentRev(client);
+    if (Number(body.baseRev) !== rev) {
+      await client.query('ROLLBACK');
+      return reply.code(409).send({
+        message: 'Data berubah di tab lain. Muat ulang halaman.', syncRev: rev,
+      });
+    }
     for (const c of body.clients) {
       await client.query(
         `INSERT INTO clients (id, name, pic, wa, email, notes, created_by, created_at)
@@ -794,14 +825,63 @@ app.post('/api/sync', { preHandler: authPreHandler }, async (request, reply) => 
         [JSON.stringify(body.master)],
       );
     }
+    const nextRev = await bumpRev(client);
     await client.query('COMMIT');
-    return { ok: true, projects: body.projects.length, clients: body.clients.length };
+    return { ok: true, projects: body.projects.length, clients: body.clients.length, syncRev: nextRev };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
   } finally {
     client.release();
   }
+});
+
+app.get('/health', async (request, reply) => {
+  try {
+    await pool.query('SELECT 1');
+  } catch {
+    return reply.code(503).send({ status: 'error', db: 'down' });
+  }
+  return { status: 'ok', db: 'ok', uptime: Math.floor(process.uptime()) };
+});
+
+app.get('/metrics', async (request, reply) => {
+  reply.header('Content-Type', 'text/plain; version=0.0.4');
+  return [
+    '# TYPE pms_requests_total counter',
+    `pms_requests_total ${metrics.requests}`,
+    '# TYPE pms_errors_total counter',
+    `pms_errors_total ${metrics.errors}`,
+    '# TYPE pms_uptime_seconds gauge',
+    `pms_uptime_seconds ${Math.floor((Date.now() - metrics.startedAt) / 1000)}`,
+  ].join('\n');
+});
+
+app.post('/api/files/reconcile', { preHandler: adminPreHandler }, async () => {
+  if (!s3) return { ok: false, message: 'S3 belum dikonfigurasi di server.' };
+  const { rows } = await pool.query("SELECT file_key FROM documents WHERE file_key <> ''");
+  const known = new Set(rows.map((r) => r.file_key));
+  const orphans = [];
+  let scanned = 0;
+  let token;
+  do {
+    const list = await s3.send(new ListObjectsV2Command({
+      Bucket: S3_BUCKET, ContinuationToken: token,
+    }));
+    for (const obj of list.Contents || []) {
+      scanned += 1;
+      const age = obj.LastModified ? Date.now() - new Date(obj.LastModified).getTime() : 0;
+      if (!known.has(obj.Key) && age > 60 * 60 * 1000) orphans.push(obj.Key);
+    }
+    token = list.NextContinuationToken;
+  } while (token);
+  for (let i = 0; i < orphans.length; i += 1000) {
+    await s3.send(new DeleteObjectsCommand({
+      Bucket: S3_BUCKET,
+      Delete: { Objects: orphans.slice(i, i + 1000).map((Key) => ({ Key })) },
+    }));
+  }
+  return { ok: true, scanned, known: known.size, deleted: orphans.length, keys: orphans.slice(0, 20) };
 });
 
 app.setNotFoundHandler((request, reply) => reply.code(404).send({ message: 'Endpoint tidak ditemukan.' }));

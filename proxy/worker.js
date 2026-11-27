@@ -43,10 +43,13 @@ async function handle(request, env) {
   }
   const upstream = await fetch(data.u, { method: request.method });
   const headers = new Headers();
-  for (const name of ['content-type', 'content-length', 'content-disposition', 'accept-ranges', 'etag']) {
+  for (const name of ['content-type', 'content-length', 'accept-ranges', 'etag']) {
     const value = upstream.headers.get(name);
     if (value) headers.set(name, value);
   }
+  const name = String(data.n || 'berkas').replace(/[\r\n"]/g, '_');
+  const disposition = data.d ? 'attachment' : 'inline';
+  headers.set('Content-Disposition', `${disposition}; filename="${name}"; filename*=UTF-8''${encodeURIComponent(name)}`);
   headers.set('Cache-Control', 'private, max-age=300');
   headers.set('X-Content-Type-Options', 'nosniff');
   return new Response(upstream.body, { status: upstream.status, headers });
