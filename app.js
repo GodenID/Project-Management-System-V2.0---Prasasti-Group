@@ -3034,6 +3034,9 @@
       dealNewFiles.push(meta.id);
       const unsaved = dealDocs[slot] && dealNewFiles.includes(dealDocs[slot].id) ? dealDocs[slot] : null;
       dealDocs[slot] = nextRevision(p, slot, meta, unsaved);
+      p.docs = p.docs || {};
+      p.docs[slot] = dealDocs[slot];
+      save();
       audit(p.id, `doc.${slot}.revision`, `${dealDocs[slot].name} (Rev ${dealDocs[slot].rev})`);
       const label = (DOCS.find((x) => x.id === slot) || {}).label || 'Dokumen';
       toast(`${label} berhasil diunggah sebagai Revisi ${dealDocs[slot].rev}.`, { tone: 'ok' });
@@ -3056,6 +3059,12 @@
         AlurStore.deleteFiles([meta.id]);
         dealNewFiles = dealNewFiles.filter((x) => x !== meta.id);
         dealDocs[slot] = p ? docOf(p, slot) : null;
+        if (p) {
+          p.docs = p.docs || {};
+          if (dealDocs[slot]) p.docs[slot] = dealDocs[slot];
+          else delete p.docs[slot];
+          save();
+        }
       }
       renderDocFields(p ? p.type : '');
       clearErr('d-docs');

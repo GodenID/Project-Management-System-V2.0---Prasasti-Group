@@ -228,6 +228,11 @@ test('hapus permanen dan reset menghapus data di server', () => {
   assert.match(server, /DELETE FROM projects/);
 });
 
+test('upload di form Deal langsung tersimpan', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.match(app, /p\.docs\[slot\] = dealDocs\[slot\];[\s\S]{0,80}save\(\);/);
+});
+
 test('admin bisa menghapus akun karyawan', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
   const store = loadStoreSource();
