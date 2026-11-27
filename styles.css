@@ -975,6 +975,12 @@ dialog::backdrop { background: rgba(14, 26, 43, .4); }
 .confirm-body { color: var(--ink-2); line-height: 1.55; }
 .confirm-body + .field { margin-top: 16px; }
 
+.modal--viewer { width: min(1000px, calc(100vw - 24px)); }
+.modal-body--viewer { padding: 0; height: min(72vh, 760px); position: relative; background: #eef1f5; }
+#viewer-frame { display: block; width: 100%; height: 100%; border: 0; }
+.viewer-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-3); font-size: 13px; }
+.viewer-loading[hidden] { display: none; }
+
 /* Pratinjau nomor QL */
 .ql-preview {
   display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px;

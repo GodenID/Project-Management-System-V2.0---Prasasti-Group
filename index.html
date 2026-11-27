@@ -527,6 +527,27 @@
     </form>
   </dialog>
 
+  <!-- Pratinjau berkas -->
+  <dialog id="dlg-viewer" class="modal modal--viewer" aria-labelledby="viewer-title">
+    <div class="modal-inner">
+      <header class="modal-head">
+        <h2 id="viewer-title">Pratinjau berkas</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Tutup pratinjau"><span aria-hidden="true">×</span></button>
+      </header>
+      <div class="modal-body modal-body--viewer">
+        <div id="viewer-loading" class="viewer-loading">Memuat berkas…</div>
+        <iframe id="viewer-frame" title="Pratinjau berkas"></iframe>
+      </div>
+      <footer class="modal-foot">
+        <span id="viewer-name" class="modal-foot-note"></span>
+        <div class="modal-foot-actions">
+          <button type="button" class="btn btn-sm" id="viewer-download">Unduh</button>
+          <button type="button" class="btn btn-sm btn-ghost" data-close>Tutup</button>
+        </div>
+      </footer>
+    </div>
+  </dialog>
+
   <!-- Detail project -->
   <dialog id="dlg-detail" class="drawer" aria-labelledby="detail-title">
     <div class="drawer-inner" id="detail-content"></div>

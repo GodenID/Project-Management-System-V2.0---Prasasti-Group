@@ -335,6 +335,18 @@ test('token bisa di-refresh dan sesi bisa dicabut admin', () => {
   assert.ok(app.includes('data-action="revoke-sessions"'));
 });
 
+test('lihat PDF memakai pratinjau di dalam aplikasi', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  const store = loadStoreSource();
+  assert.ok(html.includes('id="dlg-viewer"'));
+  assert.ok(html.includes('id="viewer-frame"'));
+  assert.ok(css.includes('.modal--viewer'));
+  assert.ok(store.includes('previewUrl: (meta) => apiFileUrl(meta)'));
+  assert.ok(app.includes('await openViewer(meta)'));
+});
+
 test('klik lihat membuka PDF di tab baru, bukan mengunduh', () => {
   const store = loadStoreSource();
   assert.ok(store.includes("const win = window.open('', '_blank')"));

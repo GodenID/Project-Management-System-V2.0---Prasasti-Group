@@ -1041,6 +1041,7 @@
     downloadFile,
     previewFile,
     isPreviewable,
+    previewUrl: (meta) => apiFileUrl(meta),
     backupAll,
     restoreAll,
   };

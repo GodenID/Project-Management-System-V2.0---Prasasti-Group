@@ -678,6 +678,39 @@
   const detailEl = $('#detail-content');
   const toastRegion = $('#toast-region');
   const restoreFileEl = $('#restore-file');
+  const dlgViewer = $('#dlg-viewer');
+  const viewerFrame = $('#viewer-frame');
+  const viewerLoading = $('#viewer-loading');
+  const viewerName = $('#viewer-name');
+  let viewerMeta = null;
+
+  async function openViewer(meta) {
+    viewerMeta = meta;
+    viewerName.textContent = meta.name || 'Berkas';
+    viewerLoading.hidden = false;
+    viewerFrame.src = 'about:blank';
+    dlgViewer.showModal();
+    try {
+      const url = await AlurStore.previewUrl(meta);
+      if (viewerMeta !== meta) return;
+      viewerFrame.src = url;
+      viewerLoading.hidden = true;
+    } catch (err) {
+      dlgViewer.close();
+      toast(err.message, { tone: 'warn' });
+    }
+  }
+
+  $('#viewer-download').addEventListener('click', async () => {
+    if (!viewerMeta) return;
+    try { await AlurStore.downloadFile(viewerMeta); }
+    catch (err) { toast(err.message, { tone: 'warn' }); }
+  });
+  dlgViewer.addEventListener('close', () => {
+    viewerFrame.src = 'about:blank';
+    viewerMeta = null;
+    viewerLoading.hidden = true;
+  });
 
   // Pilihan form yang berasal dari master data: dibangun ulang tiap master berubah.
   function renderMasterOptions() {
@@ -4732,6 +4765,10 @@
       const meta = proj ? docRefMeta(proj, slot, idx) : null;
       if (!meta) return;
       try {
+        if (AlurStore.API_MODE && meta.id && !meta.dataUrl && AlurStore.canPreview(meta)) {
+          await openViewer(meta);
+          return;
+        }
         if (!(await AlurStore.previewFile(meta))) {
           toast('Preview hanya untuk PDF dan gambar. Berkas lain akan diunduh.', { tone: 'warn' });
           await AlurStore.downloadFile(meta);
@@ -5012,7 +5049,7 @@
   });
 
   // Klik luar menutup panel detail dan konfirmasi; form tidak, agar isian tidak hilang.
-  [dlgDetail, dlgConfirm].forEach((d) => {
+  [dlgDetail, dlgConfirm, dlgViewer].forEach((d) => {
     let onBackdrop = false;
     d.addEventListener('pointerdown', (ev) => { onBackdrop = ev.target === d; });
     d.addEventListener('click', (ev) => {
@@ -5021,7 +5058,7 @@
     });
   });
 
-  [dlgForm, dlgQl, dlgDeal, dlgClient, dlgUser, dlgBulkUser, dlgConfirm, dlgDetail].forEach((d) => d.addEventListener('close', () => {
+  [dlgForm, dlgQl, dlgDeal, dlgClient, dlgUser, dlgBulkUser, dlgConfirm, dlgDetail, dlgViewer].forEach((d) => d.addEventListener('close', () => {
     if (d.contains(toastRegion)) document.body.appendChild(toastRegion);
   }));
   dlgDetail.addEventListener('close', () => { ui.detailId = null; });
