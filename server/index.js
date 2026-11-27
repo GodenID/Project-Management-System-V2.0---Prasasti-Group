@@ -857,7 +857,7 @@ app.get('/metrics', async (request, reply) => {
   ].join('\n');
 });
 
-app.post('/api/files/reconcile', { preHandler: adminPreHandler }, async () => {
+app.post('/api/files/reconcile', { preHandler: adminPreHandler }, async (request) => {
   if (!s3) return { ok: false, message: 'S3 belum dikonfigurasi di server.' };
   const { rows } = await pool.query("SELECT file_key FROM documents WHERE file_key <> ''");
   const known = new Set(rows.map((r) => r.file_key));

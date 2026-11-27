@@ -306,6 +306,7 @@ test('rekonsiliasi S3 menghapus objek yatim', () => {
   assert.ok(server.includes('DeleteObjectsCommand'));
   assert.ok(server.includes("app.post('/api/files/reconcile'"));
   assert.ok(server.includes("request.query?.dry === 'true'"));
+  assert.ok(server.includes("app.post('/api/files/reconcile', { preHandler: adminPreHandler }, async (request) =>"));
 });
 
 test('proxy membedakan unduhan dan preview', () => {
