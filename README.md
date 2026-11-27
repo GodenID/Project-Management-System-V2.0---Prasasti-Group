@@ -42,6 +42,7 @@
 | 📄 | **Dokumen per Deal** — Quotation, RAB, Proposal, SPK. Chip <span color="#16a34a">hijau</span>/<span color="#ca8a04">kuning</span>/<span color="#6b7280">abu</span> per project. |
 | 📊 | **Laporan berbasis histori** — bukan snapshot sekarang. Angka bisa > tab pipeline. |
 | 🏷️ | **Nomor QL otomatis** — `PSQL-`, `PLQL-`, `MGQL-`, `MDQL-`, `WSQL-` per tipe project. |
+| 🧾 | **Nomor PO otomatis** — `PO-0001`, `PO-0002`, … berurutan global saat project jadi Deal; kolom PO di samping nomor QL. |
 | 👥 | **4 role** — User, Finance, Manager, Admin. PIC jalankan, Finance lengkapi dokumen. |
 | 💾 | **0 server** — `localStorage` + `IndexedDB`. Tanpa database eksternal. |
 | ⚡ | **0 build, 0 dependency** — chart CSS/SVG, font opsional, keyboard-first. |
@@ -64,15 +65,26 @@ npx serve .
 # http://localhost:3000/login.html
 ```
 
-> ⚠️ Data tersimpan di browser ini saja. Jangan pakai untuk data client asli.
+> ⚠️ Data frontend masih tersimpan di browser sampai dipindah ke API. Jangan pakai untuk data client asli sebelum integrasi selesai.
+
+### Backend (live di Coolify)
+
+- Service: `prasasti-pms-api` — Fastify + PostgreSQL 18.
+- URL: `http://fmeicjglxkhqtocfnft9nchn.165.101.18.134.sslip.io`
+- Health: `GET /api/health`
+- Database: `postgresql:18-alpine` di project Coolify `PMSv2`, environment `production`.
+- Endpoint penting: `POST /api/auth/login`, `GET /api/projects`, `POST /api/projects`, `POST /api/numbers/ql`, `POST /api/numbers/po`, `GET /api/projects/:id/numbers`.
+- Nomor QL/PO dialokasikan di database dengan transaksi + idempotency key. Retry tidak bikin nomor dobel.
+- Env wajib di aplikasi Coolify: `DATABASE_URL`, `API_TOKENS`, `FRONTEND_ORIGIN`, `PORT`. Token jangan disimpan di repo.
+- Kode backend ada di folder `server/`. Deploy memakai `server/Dockerfile` dengan build context root repo.
 
 ### 🤖 Demo Accounts
 
-Semua password: **`demo123`**
+Password Admin: **`lebahganteng`**. Akun lain: **`demo123`**.
 
 | Username | Role | Akses singkat |
 |---|---|---|
-| `rina` | Admin | semua + kelola akun |
+| `goden` | Admin | semua + kelola akun |
 | `dimas` | Manager | semua project, termasuk hapus & Tidak Deal |
 | `sari` | Finance | dokumen & nominal Deal |
 | `bagus`, `nadia`, `yoga` | User | project yang dia pegang (PIC) |
@@ -80,18 +92,19 @@ Semua password: **`demo123`**
 Tidak ada pendaftaran mandiri. Akun dibuat Admin dari menu **Karyawan**.
 
 Username unik 3–40 karakter: huruf kecil, angka, titik, garis bawah, atau strip.  
-Migrasi otomatis: akun lama format email (`rina@tim.local`) dipindah jadi `rina` tanpa ubah password.
+Migrasi otomatis sekali jalan: akun lama `rina` diganti `goden` dengan password `lebahganteng`. Akun lama format email (`rina@tim.local`) juga dinormalisasi.
 
 ---
 
 ## 🧭 Features
 
 ### Pipeline Project
-- Tab: **Semua Project**, Lead Masuk, Proses QL, Deal, Tidak Deal — count per tab.
+- Tab: **Semua Project**, Lead Masuk, Proses QL, Deal, Tidak Deal — count per tab. Kolom **Nomor QL** dan **Nomor PO** bersebelahan di tabel.
 - Search (`/`), sort, filter stage / entitas / tipe / PIC / status QL / dokumen / rentang tanggal.
 - Pagination serverless 50/baris, bulk select + **Hapus yang dipilih**.
-- **Reset Data** (Admin, sidebar bawah): hapus semua project + dokumen + nomor QL dari `0001`. Wajib password reset di dialog konfirmasi. Client, karyawan, master tetap.
-- Muat **13 data contoh** sekali klik saat tabel masih kosong.
+- **Tempat Sampah**: hapus project (per baris / bulk) memindahkan data + dokumen ke trash, bukan menghapus. Cari berdasarkan nama/QL/PO/client, pilih banyak, pulihkan massal. **Hapus permanen dan kosongkan sampah hanya Admin**, wajib ketik `yakin`. Tanpa auto-purge: tidak ada penghapusan otomatis.
+- **Reset Data** (Admin, sidebar bawah): hapus semua project, dokumen, client, dan karyawan non-admin. Akun Admin, Master Data, dan sesi Admin tetap. Nomor QL/PO mulai dari `0001`. Wajib password reset di dialog konfirmasi.
+- Muat **17 data contoh** sekali klik saat tabel masih kosong. Termasuk empat baris demo umur tahap: Lead 3 hari, Lead 7 hari, QL 3 hari, dan QL 7 hari.
 - Pintasan: `N` buat baru, `B` sidebar, `Enter` detail, `Esc` tutup dialog.
 
 ### Clients
@@ -119,7 +132,7 @@ Export **Excel (.xlsx)** dari tabel project. Angka laporan dihitung dari `histor
 
 ### Karyawan & Master Data
 - Karyawan: buat/edit/nonaktifkan/aktifkan lagi. Nonaktif tetap tampil sebagai nama terakhir di project lama.
-- Bulk create akun dari teks, validasi username.
+- Bulk create akun dari teks: `Nama, username, password, role`. Password boleh kosong → password acak 10 karakter ditampilkan di hasil. Role kosong = User. Semua akun baru wajib ganti password saat login pertama.
 - Master Data: tipe project, kategori, entitas, sumber lead. Riwayat 20 versi + Reset default. Hapus kategori ditolak bila masih dipakai.
 - Audit field `db.audit` (maks 500): create / update / stage / user / master. Tampil di panel detail *Riwayat perubahan field*.
 
@@ -136,7 +149,7 @@ const NEXT = { lead: ['ql', 'lost'], ql: ['deal', 'lost'], deal: [], lost: [] };
 - **Deal & Tidak Deal terkunci.** Tanpa tombol pindah, tanpa jalur mundur.
 - Duluan: perpindahan QL bisa diurungkan, nomor QL tetap melekat dan dipakai ulang.
 - **Gerbang Proses QL** wajib: status QL (`Belum dikerjakan` / `Sedang dikerjakan`) + nilai penawaran.
-- **Gerbang Deal** wajib: nominal deal (default dari penawaran) + Quotation (semua tipe) + RAB (Prasasti Selaras).
+- **Gerbang Deal** wajib: nominal deal (default dari penawaran) + Quotation (semua tipe) + RAB (Prasasti Selaras). Nomor PO terbit otomatis sekali saat Deal dan melekat permanen.
 
 ### Nomor QL per tipe
 
@@ -176,7 +189,9 @@ Entitas **tidak terikat** tipe project:
 | Edit / pindah tahap | PIC saja | – | ✓ | ✓ |
 | Nominal deal & dokumen | PIC saja | ✓ | ✓ | ✓ |
 | Kelola client | ✓ | – | ✓ | ✓ |
-| Tidak Deal / Hapus project | – | – | ✓ | ✓ |
+| Tidak Deal / Hapus project (ke trash) | – | – | ✓ | ✓ |
+| Pulihkan dari trash | – | – | ✓ | ✓ |
+| Hapus permanen dari trash | – | – | – | ✓ |
 | Kelola akun & role | – | – | – | ✓ |
 
 - **User (PIC)** menjalankan lead → Deal. **Finance** melengkapi dokumen & nominal Deal.
@@ -193,8 +208,9 @@ Entitas **tidak terikat** tipe project:
 | `localStorage` | user, session, project, client, audit, master | `alur:users:v1`, `alur:session:v1`, `alur:data:v2` |
 | `IndexedDB` `alur-files` | blob dokumen (PDF/Word/Excel/gambar) | metadata saja di localStorage |
 
-- Sesi: **12 jam** bila centang *Tetap masuk di perangkat ini*, **1 jam** bila tidak. Token tersimpan di `localStorage` / `sessionStorage`.
-- Rate-limit login: 5 gagal / 15 menit.
+- **Backup / Pulihkan** (Admin, sidebar bawah): satu file JSON berisi akun, project, client, master, audit, **dan berkas dokumen** dari IndexedDB (base64). Pulihkan menimpa seluruh data lalu memaksa logout. Wajib ketik `yakin`. Simpan file backup di tempat berbeda dari browser.
+- Sesi: tidak auto logout. Keluar manual lewat tombol Keluar atau saat akun dinonaktifkan Admin. Token tersimpan di `localStorage` bila *Tetap masuk* dicentang, di `sessionStorage` bila tidak.
+- Rate-limit login: 5 gagal / 5 menit.
 - Multi-tab sinkron via event `storage`.
 - Password: hash SHA-256 dengan salt per akun. Cukup untuk demo lokal.
 - **Tidak ada sinkronisasi antar perangkat.** Untuk produksi: pindah `store.js` jadi panggilan API.
@@ -228,6 +244,7 @@ npm run check  # lint + test
 ├── store.js                   # akun, sesi, data project, berkas
 ├── styles.css                 # seluruh gaya
 ├── privacy.html · policy.html · disclaimer.html
+├── security.html · access.html · account.html · contact.html
 ├── tests/rules.test.js
 ├── package.json               # check / lint / test
 └── .github/workflows/ci.yml
@@ -241,8 +258,8 @@ Konstanta penting di `app.js`: `STAGES`, `NEXT`, `PROJECT_TYPES`, `ENTITIES`, `S
 
 | Prioritas | Fitur |
 |---|---|
-| **P0** | Server + database (`store.js` → API), auth server-side (bcrypt/argon2), backup JSON + restore |
-| **P1** | Recycle bin (soft-delete), aktivitas & follow-up log, reminder jatuh tempo, lampiran bebas |
+| **P0** | Server + database (`store.js` → API), auth server-side (bcrypt/argon2) |
+| **P1** | Aktivitas & follow-up log, reminder jatuh tempo, lampiran bebas |
 | **P2** | Kanban drag-drop, HPP/margin/termin, template & duplikat project, import Excel |
 | **P3** | Generate Quotation/SPK, e-sign, portal client, automation rules, forecast & aging |
 
@@ -250,7 +267,7 @@ Konstanta penting di `app.js`: `STAGES`, `NEXT`, `PROJECT_TYPES`, `ENTITIES`, `S
 
 ## 📜 Legal & Copyright
 
-Legal dapat dibuka tanpa login dari footer login, aplikasi, dan halaman legal: `privacy.html`, `policy.html`, `disclaimer.html`.
+Legal dapat dibuka tanpa login dari footer login, aplikasi, dan halaman legal: `privacy.html`, `policy.html`, `disclaimer.html`, `security.html`, `access.html`, `account.html`, `contact.html`.
 
 Copyright © 2026 Prasasti Group. All rights reserved.  
 Internal use only — jangan pakai untuk data client asli sebelum server aktif.
