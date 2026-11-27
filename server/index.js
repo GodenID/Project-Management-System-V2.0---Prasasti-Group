@@ -649,7 +649,7 @@ async function getSnapshot() {
     const slots = docsByProject.get(d.project_id) || {};
     const revs = slots[d.slot] || [];
     revs.push({
-      id: d.file_key || '', name: d.name, size: Number(d.size || 0), type: d.mime || '',
+      id: d.id, key: d.file_key, name: d.name, size: Number(d.size || 0), type: d.mime || '',
       at: iso(d.uploaded_at), by: d.uploaded_by || '', rev: d.rev,
     });
     slots[d.slot] = revs;

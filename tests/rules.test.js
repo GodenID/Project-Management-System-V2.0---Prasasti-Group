@@ -253,6 +253,15 @@ test('error unduh dokumen menampilkan pesan asli', () => {
   assert.match(app, /toast\(err\.message, \{ tone: 'warn' \}\)/);
 });
 
+test('snapshot memakai id dokumen, bukan file_key', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'server', 'schema.sql'), 'utf8');
+  const store = loadStoreSource();
+  assert.match(server, /id: d\.id, key: d\.file_key/);
+  assert.match(schema, /WHERE id = file_key/);
+  assert.match(store, /Sesi berakhir\. Silakan login ulang\./);
+});
+
 test('tautan dokumen memakai domain proxy, bukan S3 mentah', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
   const worker = fs.readFileSync(path.join(__dirname, '..', 'proxy', 'worker.js'), 'utf8');

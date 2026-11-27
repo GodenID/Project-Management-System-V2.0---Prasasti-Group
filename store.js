@@ -61,6 +61,13 @@
     const headers = { Accept: 'application/json' };
     if (body !== null) headers['Content-Type'] = 'application/json';
     const token = apiToken();
+    if (auth && !token) {
+      clearSession();
+      if (global.location && !/login\.html$/.test(global.location.pathname)) {
+        global.location.replace('login.html');
+      }
+      throw new Error('Sesi berakhir. Silakan login ulang.');
+    }
     if (auth && token) headers.Authorization = `Bearer ${token}`;
     let res;
     try {

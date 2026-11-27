@@ -90,6 +90,9 @@ CREATE TABLE IF NOT EXISTS documents (
   UNIQUE (project_id, slot, rev)
 );
 
+-- Snapshot lama memakai file_key sebagai id. Normalisasi sekali saat startup.
+UPDATE documents SET id = 'f-' || replace(gen_random_uuid()::text, '-', '') WHERE id = file_key;
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id BIGSERIAL PRIMARY KEY,
   project_id TEXT,
