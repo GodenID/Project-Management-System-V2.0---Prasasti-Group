@@ -398,6 +398,55 @@ app.post('/api/files', { preHandler: authPreHandler }, async (request, reply) =>
   };
 });
 
+app.post('/api/files/presign', { preHandler: authPreHandler }, async (request, reply) => {
+  if (!s3) return reply.code(503).send({ message: 'S3 belum dikonfigurasi di server.' });
+  const b = request.body || {};
+  const projectId = String(b.projectId || '');
+  const slot = String(b.slot || '');
+  const name = String(b.name || '');
+  const size = Number(b.size || 0);
+  if (!projectId || !slot || !name || !size) {
+    return reply.code(400).send({ message: 'projectId, slot, name, dan size wajib.' });
+  }
+  if (size > 10 * 1024 * 1024) return reply.code(400).send({ message: 'Berkas melebihi 10 MB.' });
+  const project = await pool.query('SELECT id, name FROM projects WHERE id = $1', [projectId]);
+  if (!project.rows.length) return reply.code(404).send({ message: 'Project tidak ditemukan.' });
+  const username = String(request.user.username || b.username || 'api');
+  const revRes = await pool.query(
+    'SELECT COALESCE(MAX(rev), 0) + 1 AS rev FROM documents WHERE project_id = $1 AND slot = $2',
+    [projectId, slot],
+  );
+  const rev = Number(revRes.rows[0].rev || 1);
+  const id = newId('f');
+  const key = `${safeSegment(username)}/${safeSegment(project.rows[0].name)}/${safeSegment(slot)}/rev-${rev}-${safeSegment(name)}`;
+  const type = String(b.type || 'application/octet-stream');
+  const url = await getSignedUrl(s3, new PutObjectCommand({
+    Bucket: S3_BUCKET, Key: key, ContentType: type,
+  }), { expiresIn: 300 });
+  return { id, key, rev, url };
+});
+
+app.post('/api/files/confirm', { preHandler: authPreHandler }, async (request, reply) => {
+  if (!s3) return reply.code(503).send({ message: 'S3 belum dikonfigurasi di server.' });
+  const b = request.body || {};
+  const id = String(b.id || '');
+  const key = String(b.key || '');
+  if (!id || !key) return reply.code(400).send({ message: 'id dan key wajib.' });
+  const at = new Date().toISOString();
+  await pool.query(
+    `INSERT INTO documents (id, project_id, slot, rev, file_key, name, size, mime, uploaded_by, uploaded_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     ON CONFLICT (id) DO UPDATE SET
+       name = EXCLUDED.name, size = EXCLUDED.size, mime = EXCLUDED.mime, uploaded_at = EXCLUDED.uploaded_at`,
+    [id, b.projectId || '', b.slot || '', Number(b.rev || 1), key, b.name || '',
+      Number(b.size || 0), b.type || '', request.user.id || null, at],
+  );
+  return {
+    id, key, rev: Number(b.rev || 1), name: b.name || '', size: Number(b.size || 0),
+    type: b.type || '', at, by: request.user.id || '',
+  };
+});
+
 app.get('/api/files/:id/url', { preHandler: authPreHandler }, async (request, reply) => {
   if (!s3) return reply.code(503).send({ message: 'S3 belum dikonfigurasi di server.' });
   const { rows } = await pool.query('SELECT * FROM documents WHERE id = $1', [request.params.id]);

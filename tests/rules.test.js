@@ -184,9 +184,13 @@ test('setSession tidak menghapus token API saat login', () => {
 test('upload dokumen menampilkan indikator loading', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
   const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const store = loadStoreSource();
   assert.match(app, /const uploadState = \{ deal: '', ql: ''/);
-  assert.match(app, /Mengunggah \$\{d\.label\} ke penyimpanan/);
-  assert.match(app, /Mengunggah \$\{uploadState\.ql\} ke penyimpanan/);
+  assert.match(app, /Mengunggah \$\{d\.label\}… \$\{uploadState\.dealProgress\}%/);
+  assert.match(app, /Mengunggah \$\{uploadState\.ql\}… \$\{uploadState\.qlProgress\}%/);
+  assert.match(store, /api\/files\/presign/);
+  assert.match(store, /api\/files\/confirm/);
+  assert.match(store, /XMLHttpRequest/);
   assert.match(css, /\.spinner \{/);
   assert.match(css, /@keyframes spin/);
 });

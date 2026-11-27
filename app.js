@@ -2601,7 +2601,7 @@
           <label class="btn btn-sm"><input type="file" data-ql-doc="rab" accept="${DOC_ACCEPT}" class="sr-only">${icon('upload')}Unggah RAB</label>
           <label class="btn btn-sm"><input type="file" data-ql-doc="proposal" accept="${DOC_ACCEPT}" class="sr-only">${icon('upload')}Unggah Proposal</label>
         </div>
-        ${uploadState.ql ? `<p class="doc-busy" aria-live="polite"><span class="spinner"></span>Mengunggah ${uploadState.ql} ke penyimpanan…</p>` : ''}
+        ${uploadState.ql ? `<p class="doc-busy" aria-live="polite"><span class="spinner"></span>Mengunggah ${uploadState.ql}… ${uploadState.qlProgress}%</p>` : ''}
         ${DOCS.map((d) => (uploadState.qlError[d.id] ? `<p class="field-error" role="alert">${esc(uploadState.qlError[d.id])}</p>` : '')).join('')}
       </section>` : '';
 
@@ -2930,7 +2930,7 @@
   const dealValue = $('#d-value');
   let dealDocs = {}; // { quotation: {id,name,size,type}, rab: {...} }
   let dealNewFiles = [];
-  const uploadState = { deal: '', ql: '', dealError: {}, qlError: {} };
+  const uploadState = { deal: '', ql: '', dealProgress: 0, qlProgress: 0, dealError: {}, qlError: {} };
 
   const fmtBytes = (n) => (n >= 1024 * 1024
     ? `${nf1.format(n / (1024 * 1024))} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
@@ -2950,7 +2950,7 @@
         : '<span class="opt">(opsional)</span>'}${f && f.rev ? ` <span class="rev-tag">Rev ${f.rev}</span>` : ''}</span>
           ${f && newest ? `<button type="button" class="link-btn link-btn--sm" data-doc-clear="${d.id}">Batal unggah</button>` : ''}
         </div>
-        ${busy ? `<p class="doc-busy" aria-live="polite"><span class="spinner"></span>Mengunggah ${d.label} ke penyimpanan…</p>` : ''}
+        ${busy ? `<p class="doc-busy" aria-live="polite"><span class="spinner"></span>Mengunggah ${d.label}… ${uploadState.dealProgress}%</p>` : ''}
         ${uploadErr ? `<p class="field-error" role="alert">${esc(uploadErr)}</p>` : ''}
         ${f
         ? `<p class="doc-file">${icon('file')}<button type="button" class="doc-name doc-name--link" data-doc-dl="${d.id}">${esc(f.name)}</button><span class="doc-size mono">${fmtBytes(f.size)}</span></p>
@@ -2979,6 +2979,7 @@
     dealDocs = { ...(p.docs || {}) };
     dealNewFiles = [];
     uploadState.deal = '';
+    uploadState.dealProgress = 0;
     uploadState.dealError = {};
 
     const needRab = rabRequired(p.type);
@@ -3020,10 +3021,14 @@
       const p = find(projectId);
       if (!p) { setErr('d-docs', 'Project tidak ditemukan. Muat ulang halaman.'); return; }
       uploadState.deal = slot;
+      uploadState.dealProgress = 0;
       delete uploadState.dealError[slot];
       renderDocFields(p.type);
       const meta = await AlurStore.putFile(file, {
         projectId, slot, projectName: p.name, username: user.username,
+      }, (pct) => {
+        uploadState.dealProgress = pct;
+        renderDocFields(p.type);
       });
       dealNewFiles.push(meta.id);
       const unsaved = dealDocs[slot] && dealNewFiles.includes(dealDocs[slot].id) ? dealDocs[slot] : null;
@@ -4824,10 +4829,14 @@
     if (file.size > MAX_DOC_BYTES) { toast(`${file.name} melebihi 10 MB.`, { tone: 'warn' }); return; }
     try {
       uploadState.ql = slot;
+      uploadState.qlProgress = 0;
       delete uploadState.qlError[slot];
       renderDetail();
       const meta = await AlurStore.putFile(file, {
         projectId: p.id, slot, projectName: p.name, username: user.username,
+      }, (pct) => {
+        uploadState.qlProgress = pct;
+        renderDetail();
       });
       p.docs = p.docs || {};
       p.docs[slot] = nextRevision(p, slot, meta);

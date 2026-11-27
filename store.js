@@ -570,21 +570,50 @@
     return res.url;
   }
 
+  function putDirect(url, file, type, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', url, true);
+      if (type) xhr.setRequestHeader('Content-Type', type);
+      if (typeof xhr.upload.onprogress === 'undefined') { /* progress tidak didukung */ }
+      xhr.upload.onprogress = (e) => {
+        if (!e.lengthComputable || typeof onProgress !== 'function') return;
+        onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)));
+      };
+      xhr.onload = () => (xhr.status >= 200 && xhr.status < 300)
+        ? resolve() : reject(new Error(`Unggah S3 gagal (${xhr.status}).`));
+      xhr.onerror = () => reject(new Error('Koneksi ke penyimpanan gagal.'));
+      xhr.send(file);
+    });
+  }
+
   // Menyimpan File apa adanya. Yang dikembalikan hanya metadata untuk disimpan
   // bersama data project.
-  async function putFile(file, context = {}) {
+  async function putFile(file, context = {}, onProgress = null) {
     if (API_MODE && apiToken()) {
+      const payload = {
+        projectId: context.projectId || '',
+        slot: context.slot || '',
+        name: file.name,
+        size: file.size,
+        type: file.type || '',
+        username: context.username || (currentUser() || {}).username || '',
+      };
+      try {
+        const signed = await api('/api/files/presign', { method: 'POST', body: payload });
+        if (signed && signed.url) {
+          await putDirect(signed.url, file, file.type || '', onProgress);
+          return api('/api/files/confirm', {
+            method: 'POST',
+            body: { ...payload, id: signed.id, key: signed.key, rev: signed.rev },
+          });
+        }
+      } catch (err) {
+        // S3 direkt gagal (misal CORS). Fallback lewat backend memakai base64.
+      }
       return api('/api/files', {
         method: 'POST',
-        body: {
-          projectId: context.projectId || '',
-          slot: context.slot || '',
-          name: file.name,
-          size: file.size,
-          type: file.type || '',
-          username: context.username || (currentUser() || {}).username || '',
-          data: await fileToBase64(file),
-        },
+        body: { ...payload, data: await fileToBase64(file) },
       });
     }
     const id = `f-${randomHex(10)}`;
