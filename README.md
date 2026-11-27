@@ -78,6 +78,15 @@ npx serve .
 - Env wajib di aplikasi Coolify: `DATABASE_URL`, `API_TOKENS`, `FRONTEND_ORIGIN`, `PORT`. Token jangan disimpan di repo.
 - Kode backend ada di folder `server/`. Deploy memakai `server/Dockerfile` dengan build context root repo.
 
+### Frontend (Cloudflare Pages)
+
+- Project Pages: `pms-prasasti`.
+- URL: `https://pms-prasasti.pages.dev`.
+- Domain rencana: `https://pms.prasastigroup.id` — tambahkan CNAME ke `pms-prasasti.pages.dev` di Cloudflare.
+- `config.js` berisi alamat API. Wajib HTTPS karena Pages melayani HTTPS.
+- `store.js` otomatis memakai API bila `window.PMS_API_URL` terisi. Data tetap dicache di `localStorage` sebagai fallback.
+- File yang di-upload ke Pages: `.html`, `.css`, `.js` di root. Folder `server/` tidak ikut.
+
 ### 🤖 Demo Accounts
 
 Password Admin: **`lebahganteng`**. Akun lain: **`demo123`**.
