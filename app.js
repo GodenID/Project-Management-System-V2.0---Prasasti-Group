@@ -2431,6 +2431,7 @@
         ${admin && !isMe ? (inactive
           ? `<button type="button" class="btn btn-sm btn-soft" data-action="restore-user" data-id="${esc(u.id)}">Aktifkan lagi</button>`
           : `<button type="button" class="btn btn-sm btn-quiet" data-action="deactivate-user" data-id="${esc(u.id)}">Nonaktifkan</button>`) : ''}
+        ${admin && !isMe ? `<button type="button" class="btn btn-sm btn-text-danger" data-action="delete-user" data-id="${esc(u.id)}">Hapus akun</button>` : ''}
       </div></td>
     </tr>`;
   }
@@ -4631,6 +4632,27 @@
           audit('', 'user.restore', targetId);
           save(); render();
           toast('Akun diaktifkan lagi.', { tone: 'ok' });
+        }
+      }
+      else if (a === 'delete-user') {
+        const targetId = act.dataset.id;
+        const target = team.find((u) => u.id === targetId);
+        if (!can('manageUsers') || !target || targetId === user.id) {
+          toast(denyReason('manageUsers'), { tone: 'warn' });
+        } else {
+          const ok = await confirmDialog({
+            title: `Hapus akun ${target.name}?`,
+            body: 'Akun ini tidak bisa login lagi. PIC project yang dipegang akan dilepas. Riwayat tetap menyimpan nama terakhirnya. Tindakan ini tidak bisa dibatalkan.',
+            okLabel: 'Hapus akun', tone: 'danger', requireText: 'yakin',
+          });
+          if (!ok) return;
+          try {
+            if (AlurStore.deleteUser) await AlurStore.deleteUser(targetId);
+            team = AlurStore.publicUsers();
+            audit('', 'user.delete', target.name);
+            save(); render();
+            toast(`Akun ${target.name} dihapus.`, { tone: 'ok' });
+          } catch (err) { toast(err.message, { tone: 'warn' }); }
         }
       }
       else if (a === 'reset-password') {

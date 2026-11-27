@@ -18,6 +18,15 @@ const API_TOKENS = new Set((process.env.API_TOKENS || '').split(',').map((s) => 
 
 const S3_BUCKET = process.env.S3_BUCKET || '';
 const S3_REGION = process.env.S3_REGION || 'auto';
+const DOC_PROXY_SECRET = process.env.DOC_PROXY_SECRET || '';
+const DOC_PROXY_HOST = process.env.DOC_PROXY_HOST || 'https://dokumen.pms.prasastigroup.id';
+
+function signDocToken(s3Url) {
+  const payload = Buffer.from(JSON.stringify({ u: s3Url, e: Date.now() + 10 * 60 * 1000 }))
+    .toString('base64url');
+  const sig = crypto.createHmac('sha256', DOC_PROXY_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
 const s3 = S3_BUCKET ? new S3Client({
   region: S3_REGION,
   endpoint: process.env.S3_ENDPOINT || undefined,
@@ -357,6 +366,31 @@ app.post('/api/users/:id/reset-password', { preHandler: adminPreHandler }, async
   return { ok: true };
 });
 
+app.delete('/api/users/:id', { preHandler: adminPreHandler }, async (request, reply) => {
+  const id = request.params.id;
+  if (id === request.user.id) return reply.code(400).send({ message: 'Tidak bisa menghapus akun sendiri.' });
+  const target = await pool.query('SELECT id, role FROM users WHERE id = $1', [id]);
+  if (!target.rows.length) return reply.code(404).send({ message: 'Karyawan tidak ditemukan.' });
+  if (target.rows[0].role === 'admin') {
+    const admins = await pool.query("SELECT count(*)::int AS total FROM users WHERE role = 'admin'");
+    if (admins.rows[0].total <= 1) return reply.code(400).send({ message: 'Admin terakhir tidak bisa dihapus.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM sessions WHERE user_id = $1', [id]);
+    await client.query('DELETE FROM project_owners WHERE user_id = $1', [id]);
+    await client.query('DELETE FROM users WHERE id = $1', [id]);
+    await client.query('COMMIT');
+    return { ok: true };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/files', { preHandler: authPreHandler }, async (request, reply) => {
   if (!s3) return reply.code(503).send({ message: 'S3 belum dikonfigurasi di server.' });
   const b = request.body || {};
@@ -455,7 +489,10 @@ app.get('/api/files/:id/url', { preHandler: authPreHandler }, async (request, re
   if (!doc.file_key || !String(doc.file_key).includes('/')) {
     return reply.code(409).send({ message: 'Dokumen lama belum termigrasi ke S3. Simpan/muat ulang project sekali lagi.' });
   }
-  const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: S3_BUCKET, Key: doc.file_key }), { expiresIn: 600 });
+  const s3Url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: S3_BUCKET, Key: doc.file_key }), { expiresIn: 600 });
+  const url = DOC_PROXY_SECRET
+    ? `${DOC_PROXY_HOST}/f/${encodeURIComponent(doc.id)}?t=${encodeURIComponent(signDocToken(s3Url))}`
+    : s3Url;
   return { url, name: doc.name, type: doc.mime || '' };
 });
 

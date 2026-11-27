@@ -1,0 +1,8 @@
+name = "pms-dokumen-proxy"
+main = "worker.js"
+compatibility_date = "2026-11-27"
+workers_dev = false
+
+routes = [
+  { pattern = "dokumen.pms.prasastigroup.id/*", zone_id = "990a03ee4cdacf5ae62f922a322e8d00" },
+]

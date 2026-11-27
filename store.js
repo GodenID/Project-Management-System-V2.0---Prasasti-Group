@@ -190,6 +190,13 @@
     return result.ok;
   }
 
+  async function apiDeleteUser(id) {
+    if (!API_MODE) return { ok: true };
+    const result = await api(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await refreshUsers();
+    return result;
+  }
+
   async function apiDeleteProjects(ids) {
     if (!API_MODE) return { ok: true };
     return api('/api/projects/delete', { method: 'POST', body: { ids } });
@@ -945,6 +952,7 @@
     deactivateUser,
     restoreUser,
     resetPassword: API_MODE ? apiResetPassword : resetPassword,
+    deleteUser: API_MODE ? apiDeleteUser : null,
     deleteProjectsPermanently: apiDeleteProjects,
     resetServerData: apiResetData,
     deleteNonAdminUsers,

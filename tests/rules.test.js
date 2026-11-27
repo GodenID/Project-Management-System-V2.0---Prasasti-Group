@@ -228,6 +228,29 @@ test('hapus permanen dan reset menghapus data di server', () => {
   assert.match(server, /DELETE FROM projects/);
 });
 
+test('admin bisa menghapus akun karyawan', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  const store = loadStoreSource();
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  assert.match(app, /data-action="delete-user"/);
+  assert.match(app, /await AlurStore\.deleteUser\(targetId\)/);
+  assert.match(store, /api\/users\/\$\{encodeURIComponent\(id\)\}/);
+  assert.match(server, /app\.delete\('\/api\/users\/:id'/);
+  assert.match(server, /DELETE FROM project_owners WHERE user_id/);
+});
+
+test('tautan dokumen memakai domain proxy, bukan S3 mentah', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  const worker = fs.readFileSync(path.join(__dirname, '..', 'proxy', 'worker.js'), 'utf8');
+  const config = fs.readFileSync(path.join(__dirname, '..', 'proxy', 'wrangler.toml'), 'utf8');
+  assert.match(server, /DOC_PROXY_HOST/);
+  assert.match(server, /signDocToken/);
+  assert.match(server, /dokumen\.pms\.prasastigroup\.id/);
+  assert.match(worker, /DOC_PROXY_SECRET/);
+  assert.match(worker, /s3\.ap-southeast-1\.onidel\.cloud/);
+  assert.match(config, /dokumen\.pms\.prasastigroup\.id\/\*/);
+});
+
 test('401 API menghapus sesi dan memaksa login ulang', () => {
   const store = loadStoreSource();
   assert.match(store, /res\.status === 401 && auth/);
