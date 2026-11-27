@@ -45,6 +45,13 @@
         <div class="side-foot-act">
           <button type="button" class="btn btn-sm" data-action="edit-me">Akun saya</button>
           <button type="button" class="btn btn-sm btn-quiet" data-action="logout">Keluar</button>
+        </div>
+        <p class="side-label side-label--mini" id="side-data-label">Data</p>
+        <div class="side-foot-act side-foot-act--data" id="side-data-actions">
+          <button type="button" class="btn btn-sm btn-quiet" data-action="backup-data" id="btn-backup-data" hidden>Backup Data</button>
+          <button type="button" class="btn btn-sm btn-quiet" data-action="restore-data" id="btn-restore-data" hidden>Pulihkan Data</button>
+          <input type="file" id="restore-file" accept="application/json,.json" class="sr-only" aria-label="Pilih file backup JSON">
+          <button type="button" class="btn btn-sm btn-quiet" data-action="sample-data" id="btn-sample-data" hidden>Data contoh</button>
           <button type="button" class="btn btn-sm btn-quiet" data-action="reset-data" id="btn-reset-data" hidden>Reset Data</button>
         </div>
       </div>
@@ -84,6 +91,10 @@
           <a href="privacy.html">Privacy Policy</a>
           <a href="policy.html">Terms &amp; Policy</a>
           <a href="disclaimer.html">Disclaimer</a>
+          <a href="security.html">Keamanan Informasi</a>
+          <a href="access.html">Hak Akses</a>
+          <a href="account.html">Akun &amp; Password</a>
+          <a href="contact.html">Kontak &amp; WhatsApp</a>
         </nav>
       </footer>
     </div>
@@ -363,7 +374,7 @@
 
         <div class="field">
           <label for="u-username">Username <span class="req" aria-hidden="true">*</span></label>
-          <input id="u-username" type="text" maxlength="40" autocomplete="off" required placeholder="huruf kecil, mis. rina">
+          <input id="u-username" type="text" maxlength="40" autocomplete="off" required placeholder="huruf kecil, mis. goden">
           <p class="field-error" id="u-username-err" role="alert"></p>
         </div>
 
@@ -401,7 +412,7 @@
       <header class="modal-head">
         <div>
           <h2 id="bulk-user-title">Buat banyak akun karyawan</h2>
-          <p class="modal-sub">Satu baris per karyawan: Nama Lengkap, username, password, role. Role kosong = User.</p>
+          <p class="modal-sub">Satu baris per karyawan: Nama Lengkap, username, password, role. Password kosong = dibuat acak. Role kosong = User.</p>
         </div>
         <button type="button" class="icon-btn" data-close aria-label="Tutup">
           <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
@@ -410,8 +421,8 @@
       <div class="modal-body">
         <div class="field">
           <label for="b-users">Daftar karyawan</label>
-          <textarea id="b-users" rows="9" placeholder="Rina Kartika, rina, demo123&#10;Dimas Prakoso, dimas, demo123, manager"></textarea>
-          <p class="field-hint">Pemisah koma. Role boleh: user, finance, manager, admin. Kosong = User.</p>
+          <textarea id="b-users" rows="9" placeholder="Goden, goden&#10;Dimas Prakoso, dimas, , manager&#10;Sari Wulandari, sari, sandi123"></textarea>
+          <p class="field-hint">Pemisah koma. Password boleh kosong; sistem buat 10 karakter acak dan tampilkan di hasil. Role: user, finance, manager, admin. Kosong = User. User wajib ganti password saat login pertama.</p>
           <p class="field-error" id="b-users-err" role="alert"></p>
         </div>
         <div id="b-result" aria-live="polite"></div>
@@ -523,6 +534,7 @@
 
   <div class="toast-region" id="toast-region" aria-live="polite"></div>
 
+  <script src="config.js"></script>
   <script src="store.js"></script>
   <script src="app.js"></script>
 </body>

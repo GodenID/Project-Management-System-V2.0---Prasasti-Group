@@ -6,8 +6,13 @@
   const form = $('#auth-form');
   const alertEl = $('#form-alert');
   const submitBtn = $('#auth-submit');
+  const forceForm = $('#force-pw-form');
+  const forceSubmit = $('#fp-submit');
 
   const FIELDS = ['a-username', 'a-password'];
+  const FORCE_FIELDS = ['fp-new', 'fp-confirm'];
+  let pendingUser = null;
+  let pendingOldPassword = '';
 
   await AlurStore.ensureSeed();
 
@@ -50,6 +55,41 @@
     alertEl.classList.add('is-shown');
   }
 
+  function clearForceErrors() {
+    $('#fp-alert').textContent = '';
+    $('#fp-alert').classList.remove('is-shown');
+    FORCE_FIELDS.forEach((id) => {
+      const el = $(`#${id}`);
+      el.removeAttribute('aria-invalid');
+      el.removeAttribute('aria-describedby');
+      $(`#${id}-err`).textContent = '';
+    });
+  }
+
+  function forceError(id, msg) {
+    const el = $(`#${id}`);
+    el.setAttribute('aria-invalid', 'true');
+    el.setAttribute('aria-describedby', `${id}-err`);
+    $(`#${id}-err`).textContent = msg;
+  }
+
+  function forceAlert(msg) {
+    $('#fp-alert').textContent = msg;
+    $('#fp-alert').classList.add('is-shown');
+  }
+
+  function showForcePassword(user, oldPassword) {
+    pendingUser = user;
+    pendingOldPassword = oldPassword;
+    form.hidden = true;
+    forceForm.hidden = false;
+    $('#force-pw-note').textContent = `Akun ${user.username} dibuat dengan password default. Isi password baru sebelum membuka pipeline.`;
+    clearForceErrors();
+    $('#fp-new').value = '';
+    $('#fp-confirm').value = '';
+    $('#fp-new').focus();
+  }
+
   const pwToggle = $('#toggle-pw');
   pwToggle.addEventListener('click', () => {
     const show = $('#a-password').type === 'password';
@@ -59,6 +99,10 @@
   });
 
   FIELDS.forEach((id) => $(`#${id}`).addEventListener('input', () => {
+    $(`#${id}`).removeAttribute('aria-invalid');
+    $(`#${id}-err`).textContent = '';
+  }));
+  FORCE_FIELDS.forEach((id) => $(`#${id}`).addEventListener('input', () => {
     $(`#${id}`).removeAttribute('aria-invalid');
     $(`#${id}-err`).textContent = '';
   }));
@@ -91,11 +135,15 @@
     submitBtn.disabled = true;
     submitBtn.textContent = 'Memeriksa…';
     try {
-      const found = await AlurStore.login(username, password);
+      const found = await AlurStore.login(username, password, $('#a-remember').checked);
       if (!found) {
         formAlert('Username atau password salah, atau akun nonaktif.');
         $('#a-password').select();
         refreshLock();
+        return;
+      }
+      if (found.mustChangePassword) {
+        showForcePassword(found, password);
         return;
       }
       enter(found);
@@ -109,6 +157,34 @@
           submitBtn.textContent = 'Masuk';
         }
       }
+    }
+  });
+
+  forceForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!pendingUser) return;
+    clearForceErrors();
+    const next = $('#fp-new').value;
+    const confirm = $('#fp-confirm').value;
+    const errs = [];
+    if (!next || next.length < 6) errs.push(['fp-new', 'Password baru minimal 6 karakter.']);
+    else if (next === pendingOldPassword) errs.push(['fp-new', 'Password baru tidak boleh sama dengan password default.']);
+    if (!confirm) errs.push(['fp-confirm', 'Ulangi password baru wajib diisi.']);
+    else if (next && next !== confirm) errs.push(['fp-confirm', 'Password belum sama.']);
+    if (errs.length) {
+      errs.forEach(([id, msg]) => forceError(id, msg));
+      $(`#${errs[0][0]}`).focus();
+      return;
+    }
+    forceSubmit.disabled = true;
+    forceSubmit.textContent = 'Menyimpan…';
+    try {
+      await AlurStore.changeOwnPassword(next);
+      enter({ ...pendingUser, mustChangePassword: false });
+    } catch (err) {
+      forceAlert(err.message || 'Gagal menyimpan password. Coba lagi.');
+      forceSubmit.disabled = false;
+      forceSubmit.textContent = 'Simpan dan masuk';
     }
   });
 

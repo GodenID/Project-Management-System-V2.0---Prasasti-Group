@@ -82,7 +82,7 @@
 
           <div class="field">
             <label for="a-username">Username <span class="req" aria-hidden="true">*</span></label>
-            <input id="a-username" name="username" type="text" autocomplete="username" maxlength="40" placeholder="mis. mr.goden" required>
+            <input id="a-username" name="username" type="text" autocomplete="username" maxlength="40" placeholder="mis. goden" required>
             <p class="field-error" id="a-username-err" role="alert"></p>
           </div>
 
@@ -104,6 +104,26 @@
 
           <button type="submit" class="btn btn-primary btn-block" id="auth-submit">Masuk</button>
         </form>
+
+        <form id="force-pw-form" class="form-alert-wrap" novalidate hidden>
+          <h2 class="auth-title" id="force-pw-title">Ganti password pertama kali</h2>
+          <p class="auth-note" id="force-pw-note">Akun Anda dibuat dengan password default. Isi password baru sebelum membuka pipeline.</p>
+
+          <div class="field">
+            <label for="fp-new">Password baru <span class="req" aria-hidden="true">*</span></label>
+            <input id="fp-new" type="password" maxlength="100" autocomplete="new-password" placeholder="Minimal 6 karakter" required>
+            <p class="field-error" id="fp-new-err" role="alert"></p>
+          </div>
+
+          <div class="field">
+            <label for="fp-confirm">Ulangi password baru <span class="req" aria-hidden="true">*</span></label>
+            <input id="fp-confirm" type="password" maxlength="100" autocomplete="new-password" placeholder="Sama seperti di atas" required>
+            <p class="field-error" id="fp-confirm-err" role="alert"></p>
+          </div>
+
+          <p class="form-alert" id="fp-alert" role="alert"></p>
+          <button type="submit" class="btn btn-primary btn-block" id="fp-submit">Simpan dan masuk</button>
+        </form>
       </div>
 
       <footer class="auth-foot">
@@ -111,6 +131,10 @@
           <a href="privacy.html">Privacy Policy</a>
           <a href="policy.html">Terms &amp; Policy</a>
           <a href="disclaimer.html">Disclaimer</a>
+          <a href="security.html">Keamanan Informasi</a>
+          <a href="access.html">Hak Akses</a>
+          <a href="account.html">Akun &amp; Password</a>
+          <a href="contact.html">Kontak &amp; WhatsApp</a>
         </nav>
         <p class="auth-copy">Copyright © 2026 Prasasti Group. All rights reserved.</p>
       </footer>
@@ -120,6 +144,7 @@
   <noscript><p class="noscript">Halaman ini membutuhkan JavaScript.</p></noscript>
   <div class="toast-region" id="toast-region" aria-live="polite"></div>
 
+  <script src="config.js"></script>
   <script src="store.js"></script>
   <script src="login.js"></script>
 </body>

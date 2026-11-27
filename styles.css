@@ -234,6 +234,8 @@ kbd {
 .auth-note { margin: 6px 0 22px; color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }
 
 #auth-form .field { margin-bottom: 16px; }
+#force-pw-form .field { margin-bottom: 16px; }
+#force-pw-form[hidden] { display: none; }
 .label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .label-row > label { margin-bottom: 0; }
 
@@ -323,6 +325,16 @@ body:not(.side-open) .sidebar { display: none; }
 .side-me-role { margin-bottom: 10px; }
 .side-foot-act { display: flex; gap: 6px; }
 .side-foot-act .btn { flex: 1; }
+.side-label--mini { margin-top: 10px; padding: 0 2px 5px; font-size: 10px; }
+.side-foot-act--data {
+  overflow-x: auto; overflow-y: hidden;
+  padding-bottom: 4px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
+}
+.side-foot-act--data .btn { flex: 0 0 auto; }
+.side-foot-act--data[hidden] { display: none; }
+.side-foot-act--data::-webkit-scrollbar { height: 5px; }
+.side-foot-act--data::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 999px; }
+.side-foot-act--data::-webkit-scrollbar-track { background: transparent; }
 
 .sidebar-scrim { position: fixed; inset: 0; z-index: 40; background: rgba(14, 26, 43, .34); }
 
@@ -504,9 +516,13 @@ main { flex: 1; padding: 22px var(--pad-x) 64px; outline: none; }
 .legal-foot-nav a:hover { color: var(--primary); text-decoration: underline; }
 .legal-foot-nav a[aria-current="page"] { color: var(--primary); font-weight: 600; }
 
-.c-id, .c-ql { width: 1%; white-space: nowrap; }
+.c-id, .c-ql, .c-po { width: 1%; white-space: nowrap; }
 .c-id { font-size: 12px; color: var(--ink-3); }
-.c-age, .c-offer { white-space: nowrap; }
+.c-age, .c-offer, .c-stage-age { white-space: nowrap; }
+.c-stage-age { width: 1%; }
+.stage-age { display: inline-block; padding: 1px 6px; border-radius: var(--r-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
+.stage-age--warn { background: var(--warn-tint); color: var(--warn); }
+.stage-age--late { background: var(--lost-tint); color: var(--lost); }
 .c-ent { width: 1%; white-space: nowrap; }
 /* Di tabel lebar cukup kodenya saja, nama lengkap ada di tooltip. Pada mode
    kartu nama ini ditampilkan, karena di layar sentuh tooltip tidak terbaca. */
@@ -548,6 +564,14 @@ main { flex: 1; padding: 22px var(--pad-x) 64px; outline: none; }
 }
 .ql-no--lg { font-size: 13.5px; padding: 3px 8px; }
 
+/* Nomor PO: diterbitkan saat project jadi Deal */
+.po-no {
+  display: inline-block; padding: 2px 6px;
+  border: 1px solid #c4e2d0; border-radius: var(--r-sm);
+  background: var(--deal-tint); color: var(--deal);
+  font-size: 12.5px; font-weight: 500; letter-spacing: .02em;
+}
+
 /* Kode entitas: tag ringkas di kolom Entitas */
 .ent-code {
   display: inline-block; padding: 1px 5px;
@@ -578,6 +602,10 @@ main { flex: 1; padding: 22px var(--pad-x) 64px; outline: none; }
 .combo .avatar { background: var(--surface-2); color: var(--ink-2); }
 .combo .avatar .i { width: 15px; height: 15px; }
 .combo .picker-opt:hover, .combo .picker-opt.is-active { background: #fff; box-shadow: inset 0 0 0 1px var(--primary-tint-2); }
+
+/* Tabel Tempat Sampah */
+.table--trash { min-width: 1080px; }
+.table--trash td { vertical-align: middle; }
 
 /* Tabel clients */
 .table--clients { min-width: 940px; }
@@ -723,6 +751,14 @@ main { flex: 1; padding: 22px var(--pad-x) 64px; outline: none; }
 .doc-item-label { display: block; font-weight: 500; }
 .doc-item-meta { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-item .btn { flex: none; text-decoration: none; }
+.rev-tag { display: inline-block; padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface); color: var(--ink-3); font: 600 10px/1.5 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; }
+.rev-tag--on { border-color: var(--primary-tint-2); background: var(--primary-tint); color: var(--primary-deep); }
+.doc-revs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px; }
+.doc-drop--replace { margin-top: 8px; }
+.doc-drop--replace > span { padding: 8px; font-size: 12px; }
+.doc-item--rev { margin-top: -4px; margin-left: 18px; padding: 7px 9px; background: var(--surface); }
+.doc-item--rev.is-latest { border-color: var(--primary-tint-2); background: var(--primary-tint); }
+.doc-item--rev > .i { display: none; }
 
 .d-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .d-sec-head h3 { margin-bottom: 0; }
@@ -1256,20 +1292,20 @@ dialog::backdrop { background: rgba(14, 26, 43, .4); }
   .table .row > td { padding: 0; border: 0; }
   .table .row > td + td { margin-top: 9px; }
 
-  .table .row > td[data-th]:not(.c-id, .c-ql, .c-project, .c-stage, .c-name, .c-role)::before {    content: attr(data-th);
+  .table .row > td[data-th]:not(.c-id, .c-ql, .c-po, .c-project, .c-stage, .c-name, .c-role)::before {    content: attr(data-th);
     display: block; margin-bottom: 3px;
     font-size: 11px; font-weight: 600; color: var(--ink-3);
     letter-spacing: .04em; text-transform: uppercase;
   }
 
-  .table .c-id, .table .c-ql { display: inline-block; width: auto; font-size: 11.5px; }
+  .table .c-id, .table .c-ql, .table .c-po { display: inline-block; width: auto; font-size: 11.5px; }
   .table .c-ql .t-sub { display: inline; margin-left: 8px; }
   .table .c-stage { display: inline-block; margin: 0 0 0 10px; }
   .table .c-project { margin-top: 7px; }
   .table .c-project .t-name { font-size: 14.5px; }
 
   .table .c-client, .table .c-lead, .table .c-date, .table .c-owner,
-  .table .c-age, .table .c-qls, .table .c-offer {
+  .table .c-age, .table .c-qls, .table .c-offer, .table .c-stage-age {
     display: inline-block; width: 49%; vertical-align: top;
   }
   .table .c-cat, .table .c-ent, .table .c-type {
@@ -1353,7 +1389,7 @@ dialog::backdrop { background: rgba(14, 26, 43, .4); }
   .btn-new { width: 34px; padding: 0; }
   .btn-new-label { display: none; }
   .table .c-client, .table .c-lead, .table .c-date, .table .c-owner,
-  .table .c-age, .table .c-qls, .table .c-offer,
+  .table .c-age, .table .c-qls, .table .c-offer, .table .c-stage-age,
   .table .c-cat, .table .c-ent, .table .c-type {
     width: auto; display: block; padding-left: 0;
   }

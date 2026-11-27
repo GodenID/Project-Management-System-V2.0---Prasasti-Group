@@ -8,17 +8,18 @@
     session: 'alur:session:v1',
     data: 'alur:data:v2',
     loginFails: 'alur:login-fails:v1',
+    seedAdmin: 'alur:seed-admin:v1',
   };
 
-  const SESSION_MAX_MS = 12 * 60 * 60 * 1000; // 12 jam sesi maksimal (remember=true)
-  const SESSION_MAX_MS_SHORT = 60 * 60 * 1000; // 1 jam bila tidak ingat
   const LOGIN_MAX_FAILS = 5;
-  const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 menit
+  const LOGIN_WINDOW_MS = 5 * 60 * 1000; // 5 menit
 
-  // Akun contoh agar daftar PIC project tidak kosong. Password semua: demo123
+  // Akun contoh. Admin memakai password khusus, lainnya demo123.
   const SEED_PASSWORD = 'demo123';
+  const SEED_ADMIN_USERNAME = 'goden';
+  const SEED_ADMIN_PASSWORD = 'lebahganteng';
   const SEED_USERS = [
-    ['rina', 'Rina Kartika', 'admin'],
+    [SEED_ADMIN_USERNAME, 'Goden', 'admin', SEED_ADMIN_PASSWORD],
     ['dimas', 'Dimas Prakoso', 'manager'],
     ['sari', 'Sari Wulandari', 'finance'],
     ['bagus', 'Bagus Hartono', 'user'],
@@ -35,6 +36,149 @@
   ];
   const ROLE_IDS = ROLES.map((r) => r.id);
   const isRole = (r) => ROLE_IDS.includes(r);
+
+  // ----- Mode API -----
+  const API_BASE = String(global.PMS_API_URL || '').replace(/\/$/, '');
+  const API_MODE = Boolean(API_BASE);
+  const API_TOKEN_KEY = 'alur:api-token:v1';
+  const API_USER_KEY = 'alur:api-user:v1';
+  let snapshotCache = null;
+  let syncTimer = 0;
+  let syncChain = Promise.resolve();
+
+  function apiToken() {
+    return localStorage.getItem(API_TOKEN_KEY) || sessionStorage.getItem(API_TOKEN_KEY) || '';
+  }
+
+  function setApiToken(token, remember) {
+    localStorage.removeItem(API_TOKEN_KEY);
+    sessionStorage.removeItem(API_TOKEN_KEY);
+    if (!token) return;
+    (remember ? localStorage : sessionStorage).setItem(API_TOKEN_KEY, token);
+  }
+
+  async function api(path, { method = 'GET', body = null, auth = true } = {}) {
+    const headers = { Accept: 'application/json' };
+    if (body !== null) headers['Content-Type'] = 'application/json';
+    const token = apiToken();
+    if (auth && token) headers.Authorization = `Bearer ${token}`;
+    let res;
+    try {
+      res = await fetch(`${API_BASE}${path}`, {
+        method, headers, body: body === null ? undefined : JSON.stringify(body),
+      });
+    } catch {
+      throw new Error('API tidak dapat dijangkau. Cek koneksi dan URL backend.');
+    }
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    if (!res.ok) {
+      const err = new Error((data && data.message) || `API gagal (${res.status}).`);
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  }
+
+  async function init() {
+    if (!API_MODE) return;
+    const token = apiToken();
+    if (!token) return;
+    try {
+      const snapshot = await api('/api/snapshot');
+      snapshotCache = snapshot;
+      if (Array.isArray(snapshot.users)) writeJSON(localStorage, KEYS.users, snapshot.users);
+      writeJSON(localStorage, KEYS.data, snapshot);
+    } catch (err) {
+      if (err.status === 401) clearSession();
+      throw err;
+    }
+  }
+
+  async function allocateNumber(kind, payload) {
+    if (!API_MODE) return null;
+    return api(`/api/numbers/${kind}`, {
+      method: 'POST',
+      body: { ...payload, idempotencyKey: payload.idempotencyKey || `${kind}-${payload.projectId || Date.now()}` },
+    });
+  }
+
+  async function changeOwnPassword(password) {
+    if (!API_MODE) {
+      const me = currentUser();
+      return updateUser(me.id, { name: me.name, username: me.username, password, role: me.role });
+    }
+    const data = await api('/api/auth/change-password', { method: 'POST', body: { password } });
+    const storage = sessionStorage.getItem(API_USER_KEY) ? sessionStorage : localStorage;
+    const me = readJSON(storage, API_USER_KEY, null);
+    if (me) { me.mustChangePassword = false; writeJSON(storage, API_USER_KEY, me); }
+    return data;
+  }
+
+  async function refreshUsers() {
+    if (!API_MODE || !apiToken()) return;
+    try {
+      const snapshot = await api('/api/snapshot');
+      snapshotCache = snapshot;
+      if (Array.isArray(snapshot.users)) writeJSON(localStorage, KEYS.users, snapshot.users);
+      writeJSON(localStorage, KEYS.data, snapshot);
+    } catch { /* pakai cache lokal */ }
+  }
+
+  async function apiLogin(username, password, remember = true) {
+    if (isLoginLocked()) throw new Error(`Terlalu banyak percobaan. Coba lagi ${loginRetryAfterSec()} detik lagi.`);
+    try {
+      const data = await api('/api/auth/login', {
+        method: 'POST', body: { username: normUsername(username), password }, auth: false,
+      });
+      clearLoginFails();
+      setApiToken(data.token, remember);
+      writeJSON(remember ? localStorage : sessionStorage, API_USER_KEY, data.user);
+      await refreshUsers();
+      return data.user;
+    } catch (err) {
+      if (err.status === 401) { recordLoginFail(); return null; }
+      throw err;
+    }
+  }
+
+  async function apiRegister(payload) {
+    const created = await api('/api/users', {
+      method: 'POST',
+      body: { name: payload.name, username: normUsername(payload.username), password: payload.password, role: payload.role },
+    });
+    await refreshUsers();
+    return created;
+  }
+
+  async function apiUpdateUser(id, payload) {
+    const body = {};
+    if (payload.name !== undefined) body.name = payload.name;
+    if (payload.username !== undefined) body.username = normUsername(payload.username);
+    if (payload.role !== undefined) body.role = payload.role;
+    if (payload.password !== undefined) body.password = payload.password;
+    if (payload.deactivate !== undefined) body.deactivate = payload.deactivate;
+    const result = await api(`/api/users/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+    await refreshUsers();
+    const me = readJSON(localStorage, API_USER_KEY, null);
+    if (me && me.id === id && payload.password) me.mustChangePassword = false;
+    return result;
+  }
+
+  async function apiVerifyPassword(userId, password) {
+    if (!apiToken()) return false;
+    const result = await api('/api/auth/verify', { method: 'POST', body: { password } });
+    return Boolean(result.ok);
+  }
+
+  async function apiResetPassword(id, password) {
+    const result = await api(`/api/users/${encodeURIComponent(id)}/reset-password`, {
+      method: 'POST', body: { password },
+    });
+    await refreshUsers();
+    return result.ok;
+  }
 
   function readJSON(storage, key, fallback) {
     try {
@@ -84,6 +228,7 @@
     return getUsers().map((u) => ({
       id: u.id, name: u.name, username: usernameOf(u), role: isRole(u.role) ? u.role : 'user',
       createdAt: u.createdAt, deletedAt: u.deletedAt || null, active: isActive(u),
+      mustChangePassword: Boolean(u.mustChangePassword),
     }));
   }
 
@@ -107,14 +252,41 @@
     if (changed) writeJSON(localStorage, KEYS.users, users);
   }
 
+  async function migrateSeedAdmin() {
+    if (readJSON(localStorage, KEYS.seedAdmin, null)) return;
+    const users = getUsers();
+    if (!users.length) return;
+    let changed = false;
+    let admin = users.find((u) => usernameOf(u) === SEED_ADMIN_USERNAME);
+    const legacy = users.find((u) => usernameOf(u) === 'rina');
+    if (!admin && legacy) {
+      legacy.username = SEED_ADMIN_USERNAME;
+      legacy.name = 'Goden';
+      admin = legacy;
+      changed = true;
+    }
+    if (admin) {
+      admin.role = 'admin';
+      delete admin.deletedAt;
+      delete admin.mustChangePassword;
+      const salt = randomHex(16);
+      admin.salt = salt;
+      admin.hash = await hashPassword(SEED_ADMIN_PASSWORD, salt);
+      changed = true;
+    }
+    if (changed) writeJSON(localStorage, KEYS.users, users);
+    writeJSON(localStorage, KEYS.seedAdmin, { done: true });
+  }
+
   async function ensureSeed() {
     if (getUsers().length) {
       migrateUsernames();
       ensureRoles();
+      await migrateSeedAdmin();
       return;
     }
     const users = [];
-    for (const [key, name, role] of SEED_USERS) {
+    for (const [key, name, role, password = SEED_PASSWORD] of SEED_USERS) {
       const salt = randomHex(16);
       users.push({
         id: `u-${key}`,
@@ -122,11 +294,12 @@
         username: key,
         role,
         salt,
-        hash: await hashPassword(SEED_PASSWORD, salt),
+        hash: await hashPassword(password, salt),
         createdAt: new Date().toISOString(),
       });
     }
     writeJSON(localStorage, KEYS.users, users);
+    writeJSON(localStorage, KEYS.seedAdmin, { done: true });
   }
 
   // Migrasi akun lama: email rina@tim.local jadi username rina, field email dibuang.
@@ -182,6 +355,7 @@
     clearLoginFails();
     return {
       id: found.id, name: found.name, username: usernameOf(found), role: isRole(found.role) ? found.role : 'user',
+      mustChangePassword: Boolean(found.mustChangePassword),
     };
   }
 
@@ -208,6 +382,7 @@
       role: isRole(role) ? role : (users.length ? 'user' : 'admin'),
       salt,
       hash: await hashPassword(password, salt),
+      mustChangePassword: true,
       createdAt: new Date().toISOString(),
     };
     users.push(created);
@@ -239,6 +414,7 @@
     if (password) {
       found.salt = randomHex(16);
       found.hash = await hashPassword(password, found.salt);
+      found.mustChangePassword = false;
     }
     writeJSON(localStorage, KEYS.users, users);
     return { id: found.id, name: found.name, username: found.username, role: found.role };
@@ -276,8 +452,19 @@
     if (!found) throw new Error('Karyawan tidak ditemukan.');
     found.salt = randomHex(16);
     found.hash = await hashPassword(newPassword, found.salt);
+    found.mustChangePassword = true;
     writeJSON(localStorage, KEYS.users, users);
     return true;
+  }
+
+  // Reset karyawan: hapus semua akun non-admin, admin tetap.
+  function deleteNonAdminUsers() {
+    const users = getUsers();
+    const before = users.length;
+    const kept = users.filter((u) => u.role === 'admin');
+    if (kept.length === before) return 0;
+    writeJSON(localStorage, KEYS.users, kept);
+    return before - kept.length;
   }
 
   function userCount() {
@@ -293,16 +480,17 @@
   function clearSession() {
     localStorage.removeItem(KEYS.session);
     sessionStorage.removeItem(KEYS.session);
+    localStorage.removeItem(API_TOKEN_KEY);
+    sessionStorage.removeItem(API_TOKEN_KEY);
+    localStorage.removeItem(API_USER_KEY);
+    sessionStorage.removeItem(API_USER_KEY);
   }
 
   function currentUser() {
     const s = readJSON(sessionStorage, KEYS.session, null) || readJSON(localStorage, KEYS.session, null);
     if (!s || !s.userId) return null;
-    const max = s.remember ? SESSION_MAX_MS : SESSION_MAX_MS_SHORT;
-    if (!s.at || Date.now() - s.at > max) {
-      clearSession();
-      return null;
-    }
+    // Sesi tidak kedaluwarsa otomatis. Keluar hanya lewat tombol Keluar,
+    // atau saat akun dinonaktifkan/dihapus Admin.
     ensureRoles();
     const u = publicUsers().find((x) => x.id === s.userId);
     if (!u || u.deletedAt) { clearSession(); return null; }
@@ -427,16 +615,88 @@
     return Boolean(w);
   }
 
+  // ----- Backup & restore (JSON, satu file berisi data + berkas) -----
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error || new Error('Gagal membaca berkas.'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function dataUrlToBlob(dataUrl, fallbackType) {
+    const text = String(dataUrl || '');
+    const comma = text.indexOf(',');
+    if (comma < 0) throw new Error('Berkas backup rusak.');
+    const head = text.slice(0, comma);
+    const match = /^data:([^;]+);base64$/i.exec(head);
+    if (!match) throw new Error('Format berkas backup tidak dikenali.');
+    const bin = atob(text.slice(comma + 1));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: match[1] || fallbackType || 'application/octet-stream' });
+  }
+
+  async function backupAll() {
+    const files = [];
+    try {
+      const recs = await fileTx('readonly', (store) => store.getAll()) || [];
+      for (const rec of recs) {
+        if (!rec || !rec.blob) continue;
+        files.push({
+          id: rec.id, name: rec.name || '', size: rec.size || rec.blob.size,
+          type: rec.type || rec.blob.type || '', at: rec.at || '',
+          dataUrl: await blobToDataUrl(rec.blob),
+        });
+      }
+    } catch {
+      // Berkas gagal dibaca bukan alasan membatalkan backup data utama.
+    }
+    return {
+      app: 'prasasti-pms', version: 2, at: new Date().toISOString(),
+      users: getUsers(), data: readJSON(localStorage, KEYS.data, null), files,
+    };
+  }
+
+  async function restoreAll(payload) {
+    if (!payload || payload.app !== 'prasasti-pms') throw new Error('File ini bukan backup Prasasti PMS.');
+    if (!Array.isArray(payload.users) || !payload.users.length) throw new Error('Backup tidak berisi akun.');
+    if (!payload.data || !Array.isArray(payload.data.projects)) throw new Error('Backup tidak berisi data project.');
+    if (!Array.isArray(payload.files)) throw new Error('Struktur berkas backup tidak valid.');
+    writeJSON(localStorage, KEYS.users, payload.users);
+    saveData(payload.data);
+    let restoredFiles = 0;
+    for (const f of payload.files) {
+      if (!f || !f.id || !f.dataUrl) continue;
+      try {
+        const blob = dataUrlToBlob(f.dataUrl, f.type);
+        await fileTx('readwrite', (store) => store.put({
+          id: f.id, name: f.name || '', size: f.size || blob.size,
+          type: f.type || blob.type || '', at: f.at || new Date().toISOString(), blob,
+        }));
+        restoredFiles += 1;
+      } catch {
+        // Satu berkas rusak tidak membatalkan pemulihan project dan akun.
+      }
+    }
+    clearSession();
+    return { projects: payload.data.projects.length, users: payload.users.length, files: restoredFiles };
+  }
+
   // ----- Data project -----
   function loadData() {
+    if (API_MODE && snapshotCache) return snapshotCache;
     const data = readJSON(localStorage, KEYS.data, null);
     if (!data || !Array.isArray(data.projects)) {
-      return { seq: 0, qlSeq: {}, clients: [], projects: [], audit: [], masterHistory: [] };
+      return { seq: 0, qlSeq: {}, poSeq: 0, clients: [], projects: [], audit: [], masterHistory: [] };
     }
     const out = {
       seq: Number.isInteger(data.seq) ? data.seq : data.projects.length,
       // Nomor QL berurutan per tipe project, mis. { 'Mutiari Garden': 4 }.
       qlSeq: (data.qlSeq && typeof data.qlSeq === 'object') ? data.qlSeq : {},
+      // Nomor PO berurutan global, mis. PO-0004.
+      poSeq: Number.isInteger(data.poSeq) ? data.poSeq : 0,
       clients: Array.isArray(data.clients) ? data.clients : [],
       projects: data.projects,
       master: (data.master && typeof data.master === 'object') ? data.master : null,
@@ -488,26 +748,50 @@
 
   function saveData(data) {
     writeJSON(localStorage, KEYS.data, data);
+    if (!API_MODE) return;
+    snapshotCache = data;
+    if (!apiToken()) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => {
+      const payload = {
+        projects: data.projects || [],
+        clients: data.clients || [],
+        audit: data.audit || [],
+        master: data.master || null,
+        users: getUsers(),
+      };
+      syncChain = syncChain
+        .then(() => api('/api/sync', { method: 'POST', body: payload }))
+        .catch((err) => {
+          console.error('Sinkronisasi ke API gagal:', err);
+          if (typeof global.dispatchEvent === 'function') {
+            global.dispatchEvent(new CustomEvent('alur:sync-error', { detail: { message: err.message } }));
+          }
+        });
+    }, 400);
   }
 
   global.AlurStore = {
     KEYS,
     SEED_PASSWORD,
     ROLES,
-    SESSION_MAX_MS,
-    SESSION_MAX_MS_SHORT,
     LOGIN_MAX_FAILS,
+    API_MODE,
+    init,
     ensureSeed,
     ensureRoles,
-    login,
+    login: API_MODE ? apiLogin : login,
     isLoginLocked,
     loginRetryAfterSec,
-    verifyPassword,
-    register,
-    updateUser,
+    verifyPassword: API_MODE ? apiVerifyPassword : verifyPassword,
+    register: API_MODE ? apiRegister : register,
+    updateUser: API_MODE ? apiUpdateUser : updateUser,
+    changeOwnPassword,
+    allocateNumber,
     deactivateUser,
     restoreUser,
-    resetPassword,
+    resetPassword: API_MODE ? apiResetPassword : resetPassword,
+    deleteNonAdminUsers,
     userCount,
     publicUsers,
     activeUsers,
@@ -522,5 +806,7 @@
     downloadFile,
     previewFile,
     isPreviewable,
+    backupAll,
+    restoreAll,
   };
 })(window);

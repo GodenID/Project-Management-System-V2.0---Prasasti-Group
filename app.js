@@ -1,9 +1,10 @@
 /* Prasasti Group — Project Management System: pipeline satu arah
    Lead Masuk -> Proses QL -> Deal, dengan cabang Tidak Deal.
    Perpindahan tahap lewat tombol, bukan geser. */
-(() => {
+(async () => {
   'use strict';
 
+  await AlurStore.init();
   let user = AlurStore.currentUser();
   if (!user) {
     location.replace('login.html');
@@ -127,6 +128,8 @@
     editDocs: ['admin', 'manager', 'user', 'finance'],
     editClient: ['admin', 'manager', 'user'],
     deleteProject: ['admin', 'manager'],
+    restoreProject: ['admin', 'manager'],
+    deleteForever: ['admin'],
     manageUsers: ['admin'],
     masterData: ['admin'],
     resetData: ['admin'],
@@ -194,6 +197,7 @@
 
   const nf = new Intl.NumberFormat('id-ID');
   const nf1 = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
+  const collator = new Intl.Collator('id', { numeric: true });
   const dFull = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
   const dNoYear = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short' });
   const dTime = new Intl.DateTimeFormat('id-ID', {
@@ -311,12 +315,45 @@
 
   let db = AlurStore.loadData();
   db.projects = db.projects.filter(valid);
+  // Data lama belum punya nomor PO: isi untuk project yang sudah Deal.
+  const noPo = db.projects.filter((p) => p.stage === 'deal' && !p.poNo);
+  if (noPo.length) {
+    noPo.forEach((p) => { p.poNo = takePoNo(); });
+    try { AlurStore.saveData(db); } catch { /* tersimpan saat aksi berikutnya */ }
+  }
   if (!Array.isArray(db.audit)) db.audit = [];
   if (!Array.isArray(db.masterHistory)) db.masterHistory = [];
-  // Hapus = permanen langsung. Semua project di db adalah aktif.
-  const alive = () => true;
-  const trashed = () => false;
-  const aliveProjects = () => db.projects;
+  // Migrasi dokumen lama: berkas yang tersimpan jadi Revisi 1.
+  db.projects.forEach((p) => Object.values(p.docs || {}).forEach((f) => {
+    if (!f || !f.id) return;
+    if (!Array.isArray(f.history)) f.history = [];
+    if (!f.rev) f.rev = 1;
+  }));
+  // Hapus biasa = pindah ke Tempat Sampah (soft-delete). Project tetap di db
+  // beserta dokumennya supaya bisa dipulihkan. Hapus permanen hanya Admin.
+  const alive = (p) => !p.deletedAt;
+  const trashed = (p) => Boolean(p.deletedAt);
+  const aliveProjects = () => db.projects.filter(alive);
+  const trashedProjects = () => db.projects.filter(trashed);
+
+  // Indeks lookup: hindari Array.find berulang saat 5000+ project/client.
+  let projectIndex = new Map();
+  let clientIndex = new Map();
+  let clientNameIndex = new Map();
+  let clientProjects = new Map();
+  function rebuildIndexes() {
+    projectIndex = new Map(db.projects.map((p) => [p.id, p]));
+    clientIndex = new Map(db.clients.map((c) => [c.id, c]));
+    clientNameIndex = new Map(db.clients.map((c) => [String(c.name || '').trim().toLowerCase(), c]));
+    clientProjects = new Map();
+    db.projects.forEach((p) => {
+      if (!p.clientId) return;
+      const list = clientProjects.get(p.clientId) || [];
+      list.push(p);
+      clientProjects.set(p.clientId, list);
+    });
+  }
+  rebuildIndexes();
 
   function audit(projectId, action, detail = '') {
     db.audit.push({
@@ -341,6 +378,7 @@
   }
 
   const save = () => {
+    rebuildIndexes();
     try {
       AlurStore.saveData(db);
     } catch {
@@ -350,6 +388,7 @@
 
   // Dipakai saat menyimpan berkas: pemanggil perlu tahu kalau kuota penuh.
   const trySave = () => {
+    rebuildIndexes();
     try {
       AlurStore.saveData(db);
       return true;
@@ -372,6 +411,8 @@
       filters: { stage: '', lead: '', type: '', subtype: '', entity: '', owner: '', qlStatus: '', docs: '', from: '', to: '' },
     },
     clientList: { page: 1, perPage: 50, sortKey: 'projects', sortDir: -1, status: '' },
+    trashList: { page: 1, perPage: 50 },
+    trash: { query: '', selected: new Set() },
     selected: new Set(),
   };
 
@@ -410,15 +451,63 @@
   }
   loadUiPrefs();
 
-  const find = (id) => db.projects.find((p) => p.id === id);
+  const find = (id) => projectIndex.get(id) || null;
   const byStage = (k) => db.projects.filter((p) => p.stage === k && alive(p));
   const daysIn = (p) => Math.max(0, Math.floor((Date.now() - Date.parse(p.stageChangedAt)) / DAY));
-  const isStale = (p) => Boolean(STAGES[p.stage].staleDays) && daysIn(p) >= STAGES[p.stage].staleDays;
+  // Umur di tahap: 3 hari kuning, 7 hari merah. Tanpa target pindah.
+  const stageAgeTone = (p) => {
+    if (p.stage !== 'lead' && p.stage !== 'ql') return '';
+    const d = daysIn(p);
+    return d >= 7 ? 'late' : d >= 3 ? 'warn' : '';
+  };
+  const isStale = (p) => stageAgeTone(p) !== '';
   const isLocked = (p) => NEXT[p.stage].length === 0;
   const canMove = (from, to) => from !== to && NEXT[from].includes(to);
   const lastNote = (p) => (p.history.length ? p.history[p.history.length - 1].note || '' : '');
   const hasQl = (p) => Boolean(p.qlNo);
-  const docOf = (p, id) => (p.docs || {})[id] || null;
+  // Satu slot dokumen = objek revisi terbaru, dengan array history berisi semua revisi.
+  const docOf = (p, id) => (p && p.docs ? p.docs[id] : null) || null;
+  const docHistoryOf = (cur) => {
+    if (!cur) return [];
+    const old = Array.isArray(cur.history) ? cur.history.slice() : [];
+    const last = old[old.length - 1];
+    if (!last || last.id !== cur.id) old.push({ ...cur, rev: cur.rev || 1 });
+    return old;
+  };
+  const docHistory = (p, id) => docHistoryOf(docOf(p, id));
+  const allDocIds = (p) => DOCS.flatMap((d) => docHistory(p, d.id).map((f) => f.id).filter(Boolean));
+  const docRefMeta = (p, slot, idx) => (idx === undefined || idx === ''
+    ? docOf(p, slot) : (docHistory(p, slot)[Number(idx)] || docOf(p, slot)));
+  // Daftar dokumen + semua revisi di panel detail.
+  function docListHtml(p, slots) {
+    return `<ul class="doc-list">${slots.map((slot) => {
+      const d = DOCS.find((x) => x.id === slot);
+      const need = docNeeded(d, p.type);
+      const revs = docHistory(p, slot);
+      if (!revs.length) return `<li class="doc-item is-empty">${icon('file')}
+        <span class="doc-item-text"><span class="doc-item-label">${d.label}${need ? '' : ' <span class="opt">(opsional)</span>'}</span>
+        <span class="doc-item-meta ${need ? 'is-warn' : 'muted'}">Belum diunggah</span></span></li>`;
+      return `<li class="doc-item">${icon('file')}
+        <span class="doc-item-text"><span class="doc-item-label">${d.label}${need ? '' : ' <span class="opt">(opsional)</span>'} <span class="rev-tag">${revs.length} revisi</span></span></span></li>
+        ${revs.map((rev, i) => {
+          const latest = i === revs.length - 1;
+          return `<li class="doc-item doc-item--rev${latest ? ' is-latest' : ''}">
+            <span class="doc-item-text"><span class="doc-item-label">Revisi ${rev.rev || i + 1}${latest ? ' <span class="rev-tag rev-tag--on">terbaru</span>' : ''}</span>
+            <span class="doc-item-meta mono">${esc(rev.name)} · ${fmtBytes(rev.size)}${rev.by ? ` · ${esc(teamName(rev.by))}` : ''}${rev.at ? ` · ${dFull.format(new Date(rev.at))}` : ''}</span></span>
+            <button type="button" class="btn btn-sm" data-preview-doc="${esc(p.id)}:${slot}:${i}">${icon('file')}Lihat</button>
+            <button type="button" class="btn btn-sm" data-dl-doc="${esc(p.id)}:${slot}:${i}">${icon('download')}Unduh</button>
+          </li>`;
+        }).join('')}`;
+    }).join('')}</ul>`;
+  }
+
+  // Upload baru menambah revisi, berkas lama tidak dihapus.
+  function nextRevision(p, slot, meta, base = null) {
+    const cur = base || docOf(p, slot);
+    const old = docHistoryOf(cur).slice(0, -1); // semua kecuali yang akan diganti
+    if (cur && cur.id) old.push({ ...cur, rev: cur.rev || 1 });
+    return { ...meta, at: new Date().toISOString(), by: user.id, rev: old.length + 1, history: old };
+  }
 
   // Kategori ditampilkan sebagai "Tipe · Kategori".
   const typeLabel = (p) => (p.subtype ? `${p.type} · ${p.subtype}` : p.type || '—');
@@ -444,11 +533,11 @@
   // sekali dan langsung berlaku di semua project miliknya.
   // ---------------------------------------------------------------------------
   const NO_CLIENT = { id: '', name: '—', pic: '', wa: '', email: '', notes: '' };
-  const clientById = (id) => db.clients.find((c) => c.id === id) || null;
+  const clientById = (id) => clientIndex.get(id) || null;
   const clientOf = (p) => clientById(p.clientId) || NO_CLIENT;
   const normName = (s) => String(s || '').trim().toLowerCase();
-  const clientByName = (name) => db.clients.find((c) => normName(c.name) === normName(name)) || null;
-  const projectsOfClient = (id) => aliveProjects().filter((p) => p.clientId === id);
+  const clientByName = (name) => clientNameIndex.get(normName(name)) || null;
+  const projectsOfClient = (id) => (clientProjects.get(id) || []).filter(alive);
 
   function newClientId() {
     let id;
@@ -531,11 +620,30 @@
     return no;
   }
 
+  // Nomor PO berurutan global (PO-0001, PO-0002, ...), diterbitkan sekali
+  // saat project jadi Deal dan melekat sampai project dihapus permanen.
+  function takePoNo() {
+    let fresh = null;
+    try { fresh = AlurStore.loadData(); } catch { /* pakai data lokal */ }
+    const used = new Set(db.projects.map((p) => p.poNo).filter(Boolean));
+    if (fresh && fresh.projects) fresh.projects.forEach((p) => { if (p.poNo) used.add(p.poNo); });
+    const freshSeq = Number(fresh && fresh.poSeq) || 0;
+    if (freshSeq > (db.poSeq || 0)) db.poSeq = freshSeq;
+    let no = '';
+    let guard = 0;
+    do {
+      db.poSeq = (db.poSeq || 0) + 1;
+      no = `PO-${String(db.poSeq).padStart(4, '0')}`;
+      guard += 1;
+    } while (used.has(no) && guard < 10000);
+    return no;
+  }
+
   // Kunci lintas tab (Web Locks API) supaya dua tab yang klik simpan
   // barengan tidak dapat nomor sama. Tanpa dukungan, jalan langsung.
-  async function withQlLock(fn) {
+  async function withSeqLock(fn) {
     if (navigator.locks && typeof navigator.locks.request === 'function') {
-      return navigator.locks.request('alur-ql-alloc', { mode: 'exclusive' }, fn);
+      return navigator.locks.request('alur-seq-alloc', { mode: 'exclusive' }, fn);
     }
     return fn();
   }
@@ -569,6 +677,7 @@
   const dlgDetail = $('#dlg-detail');
   const detailEl = $('#detail-content');
   const toastRegion = $('#toast-region');
+  const restoreFileEl = $('#restore-file');
 
   // Pilihan form yang berasal dari master data: dibangun ulang tiap master berubah.
   function renderMasterOptions() {
@@ -613,6 +722,7 @@
   // Render
   // ---------------------------------------------------------------------------
   function render() {
+    rebuildIndexes();
     renderSide();
     renderRail();
     renderTopbar();
@@ -627,10 +737,12 @@
       { page: 'clients', label: 'Clients', icon: 'building', count: db.clients.length },
       { page: 'report', label: 'Laporan', icon: 'chart', count: '' },
       { page: 'staff', label: 'Karyawan', icon: 'users', count: team.length },
+      ...(can('deleteProject') ? [{ page: 'trash', label: 'Tempat Sampah', icon: 'trash', count: trashedProjects().length }] : []),
       ...(can('masterData') ? [{ page: 'master', label: 'Master Data', icon: 'sliders', count: '' }] : []),
     ];
     const href = {
-      project: '#/semua', clients: '#/clients', report: '#/laporan', staff: '#/karyawan', master: '#/master-data',
+      project: '#/semua', clients: '#/clients', report: '#/laporan', staff: '#/karyawan',
+      trash: '#/sampah', master: '#/master-data',
     };
     sideMenuEl.innerHTML = `<p class="side-label">Menu</p>${items.map((m) => `
       <a class="side-item" href="${href[m.page]}" data-page="${m.page}"
@@ -647,6 +759,14 @@
     $('#me-role').textContent = ROLE_LABEL[user.role];
     const resetBtn = $('#btn-reset-data');
     if (resetBtn) resetBtn.hidden = !can('resetData');
+    ['#btn-backup-data', '#btn-restore-data', '#btn-sample-data'].forEach((sel) => {
+      const btn = $(sel);
+      if (btn) btn.hidden = !can('resetData');
+    });
+    const dataRow = $('#side-data-actions');
+    if (dataRow) dataRow.hidden = !can('resetData');
+    const dataLabel = $('#side-data-label');
+    if (dataLabel) dataLabel.hidden = !can('resetData');
   }
 
   // Tab tahap: jumlah project saja, tanpa nominal. Diletakkan di tengah.
@@ -691,6 +811,7 @@
       project: can('createProject') ? ['new', 'Project Baru'] : null,
       report: null,
       master: null,
+      trash: null,
     }[page];
     primaryBtn.hidden = !primary;
     if (primary) {
@@ -699,13 +820,14 @@
       primaryBtn.setAttribute('aria-label', primary[1]);
     }
     // Laporan dan Master Data punya kontrol sendiri, pencarian tidak dipakai.
-    searchEl.closest('.search').hidden = page === 'report' || page === 'master';
+    searchEl.closest('.search').hidden = page === 'report' || page === 'master' || page === 'trash';
     const hint = {
       staff: 'Cari karyawan berdasarkan nama, username, atau role',
       clients: 'Cari client berdasarkan nama, PIC, WhatsApp, atau email',
       project: 'Cari project, nomor QL, perusahaan, atau PIC',
       report: '',
       master: '',
+      trash: '',
     };
     searchEl.placeholder = hint[page] || '';
     searchEl.setAttribute('aria-label', hint[page] || 'Cari');
@@ -715,9 +837,9 @@
     && (p.owners || []).includes(uid)).length;
 
   function renderView() {
-    const custom = { staff: staffView, clients: clientsView, report: reportView, master: masterView };
+    const custom = { staff: staffView, clients: clientsView, report: reportView, master: masterView, trash: trashView };
     if (custom[ui.page]) {
-      const labels = { staff: 'Karyawan', clients: 'Clients', report: 'Laporan', master: 'Master Data' };
+      const labels = { staff: 'Karyawan', clients: 'Clients', report: 'Laporan', master: 'Master Data', trash: 'Tempat Sampah' };
       viewEl.removeAttribute('role');
       viewEl.removeAttribute('aria-labelledby');
       viewEl.setAttribute('aria-label', labels[ui.page]);
@@ -1012,6 +1134,7 @@
     const projectCols = [
       { h: 'ID Project', w: 14, get: (p) => p.id },
       { h: 'Nomor QL', w: 14, get: (p) => p.qlNo || '—' },
+      { h: 'Nomor PO', w: 14, get: (p) => p.poNo || '—' },
       { h: 'Nama Project', w: 34, get: (p) => p.name },
       { h: 'Tahap', w: 15, get: (p) => STAGES[p.stage].label },
       { h: 'Tipe Project', w: 20, get: (p) => p.type || '—' },
@@ -1034,7 +1157,7 @@
       { h: 'Tanggal Deal', kind: 'date', get: (p) => stageAt(p, 'deal') },
       { h: 'Tanggal Tidak Deal', kind: 'date', get: (p) => stageAt(p, 'lost') },
       { h: 'Tanggal Dibuat', kind: 'date', get: (p) => p.createdAt || '' },
-      { h: 'Dokumen Deal', w: 30, get: (p) => (p.stage === 'deal' ? DOCS.map((d) => `${d.label}: ${docOf(p, d.id) ? 'Ada' : 'Belum'}`).join('; ') : '—') },
+      { h: 'Dokumen Deal', w: 34, get: (p) => (p.stage === 'deal' ? DOCS.map((d) => { const f = docOf(p, d.id); return `${d.label}: ${f ? `Ada (Rev ${f.rev || 1}, ${docHistory(p, d.id).length} versi)` : 'Belum'}`; }).join('; ') : '—') },
       { h: 'Catatan Terakhir', w: 30, get: (p) => lastNote(p) || '—' },
       { h: 'Deskripsi', w: 36, get: (p) => p.desc || '—' },
     ];
@@ -1069,7 +1192,7 @@
       { h: 'Closing Rate', kind: 'pct', get: (r) => (r.rate === null ? '' : r.rate) },
       { h: 'Nilai Deal', kind: 'rp', total: 1, get: (r) => r.value },
     ], team.map((u) => {
-      const mine = db.projects.filter((p) => (p.owners || []).includes(u.id));
+      const mine = aliveProjects().filter((p) => (p.owners || []).includes(u.id));
       const c = {}; ORDER.forEach((k) => { c[k] = mine.filter((p) => enteredIn(p, k, from, to)).length; });
       const done = c.deal + c.lost;
       return { u, ...c, rate: done ? Math.round((c.deal / done) * 100) : null,
@@ -1136,19 +1259,19 @@
           ['Closing Rate', done ? `${Math.round((n.deal / done) * 100)}%` : '—', 'text'],
           ['Total Nilai Deal (periode)', dealValue, 'rp'],
           ['Rata-rata Nilai Deal', dealInPeriod.length ? Math.round(dealValue / dealInPeriod.length) : 0, 'rp'],
-          ['Total Project (saat ini, semua tahap)', db.projects.length, 'num'],
+          ['Total Project (saat ini, semua tahap)', aliveProjects().length, 'num'],
           ['Total Client', db.clients.length, 'num'],
           ['Total Karyawan', team.length, 'num'],
         ],
         sheetList: [
-          ['Semua Project', 'Seluruh project, keadaan saat ini', db.projects.length],
+          ['Semua Project', 'Seluruh project, keadaan saat ini', aliveProjects().length],
           ...ORDER.map((k) => [STAGES[k].label, `Project tahap ${STAGES[k].label}, keadaan saat ini`, byStage(k).length]),
           ['Ringkasan per Tahap', 'Masuk periode vs keadaan saat ini', ORDER.length],
           ['Kinerja Sales', 'Per karyawan, periode terpilih', team.length],
           ['Per Sumber / Jenis / Tipe / Kategori / Entitas', '5 sheet: jumlah lead masuk periode, per dimensi', 5],
           ['Deal per Tipe / Kategori / Entitas', '3 sheet: nilai deal periode, per dimensi', 3],
           ['Clients', 'Database client + nilai deal', db.clients.length],
-          ['Riwayat Tahap', 'Semua perpindahan tahap', db.projects.reduce((s, p) => s + p.history.length, 0)],
+          ['Riwayat Tahap', 'Semua perpindahan tahap', aliveProjects().reduce((s, p) => s + p.history.length, 0)],
         ],
       }),
     };
@@ -1434,7 +1557,7 @@
   function repSales() {
     const { from, to } = ui.report;
     const rows = team.map((u) => {
-      const mine = db.projects.filter((p) => (p.owners || []).includes(u.id));
+      const mine = aliveProjects().filter((p) => (p.owners || []).includes(u.id));
       const c = {};
       ORDER.forEach((k) => { c[k] = mine.filter((p) => enteredIn(p, k, from, to)).length; });
       const done = c.deal + c.lost;
@@ -1494,10 +1617,10 @@
 
   function repProspect() {
     const { from, to } = ui.report;
-    const dealIn = db.projects.filter((p) => enteredIn(p, 'deal', from, to));
-    const lostIn = db.projects.filter((p) => enteredIn(p, 'lost', from, to));
+    const dealIn = aliveProjects().filter((p) => enteredIn(p, 'deal', from, to));
+    const lostIn = aliveProjects().filter((p) => enteredIn(p, 'lost', from, to));
     // "Belum deal" adalah keadaan sekarang, dibatasi lead yang masuk pada periode.
-    const openIn = db.projects.filter((p) => (p.stage === 'lead' || p.stage === 'ql')
+    const openIn = aliveProjects().filter((p) => (p.stage === 'lead' || p.stage === 'ql')
       && enteredIn(p, 'lead', from, to));
     const hotOpen = openIn.filter((p) => p.lead === 'hot');
     const coldOpen = openIn.filter((p) => p.lead === 'cold');
@@ -1510,7 +1633,7 @@
 
     // Konversi menurut jenis lead: hot memang harus lebih tinggi dari cold.
     const byKind = LEAD_KINDS.map((k) => {
-      const all = db.projects.filter((p) => p.lead === k.id && enteredIn(p, 'lead', from, to));
+      const all = aliveProjects().filter((p) => p.lead === k.id && enteredIn(p, 'lead', from, to));
       const won = all.filter((p) => p.stage === 'deal').length;
       const closed = all.filter((p) => p.stage === 'deal' || p.stage === 'lost').length;
       return {
@@ -1626,7 +1749,7 @@
   function matches(p, q) {
     if (!q) return true;
     const c = clientOf(p);
-    return [p.id, p.qlNo, p.name, p.entity, entityName(p.entity), p.type, p.subtype,
+    return [p.id, p.qlNo, p.poNo, p.name, p.entity, entityName(p.entity), p.type, p.subtype,
       c.name, c.pic, c.wa, c.email, p.source, p.desc]
       .concat((p.owners || []).map(teamName))
       .some((v) => String(v || '').toLowerCase().includes(q));
@@ -1637,7 +1760,7 @@
     ['changed', 'Terbaru diubah'], ['created', 'Terbaru dibuat'], ['name', 'Nama project'],
     ['client', 'Nama client'], ['event', 'Tanggal kegiatan'], ['offer', 'Nilai penawaran / deal'],
   ];
-  const subtypeOptions = () => [...new Set(db.projects.map((p) => p.subtype).filter(Boolean))]
+  const subtypeOptions = () => [...new Set(aliveProjects().map((p) => p.subtype).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, 'id'));
 
   function listFiltered(stage) {
@@ -1678,7 +1801,7 @@
     return list.slice().sort((a, b) => {
       const x = val(a); const y = val(b);
       const cmp = typeof x === 'number' && typeof y === 'number' ? x - y
-        : String(x).localeCompare(String(y), 'id', { numeric: true });
+        : collator.compare(String(x), String(y));
       return cmp * sortDir || (a.stageChangedAt < b.stageChangedAt ? 1 : -1);
     });
   }
@@ -1792,7 +1915,6 @@
     const s = STAGES[k];
     const all = byStage(k);
     const items = visible(k);
-    const stale = all.filter(isStale).length;
 
     const stats = [['Project', String(all.length)]];
     if (k === 'lead') {
@@ -1851,6 +1973,7 @@
     const cols = [
       canDel ? `<th class="c-sel"><input type="checkbox" data-select-all aria-label="Pilih semua project di halaman ini"${allOnPage ? ' checked' : ''}></th>` : '',
       showQl ? '<th class="c-ql">Nomor QL</th>' : '',
+      showQl ? '<th class="c-po">Nomor PO</th>' : '',
       '<th class="c-project">Project</th>',
       '<th class="c-type">Tipe project</th>',
       '<th class="c-cat">Kategori</th>',
@@ -1863,6 +1986,7 @@
       '<th class="c-date">Tanggal kegiatan</th>',
       '<th class="c-owner">PIC project</th>',
       '<th class="c-age">Tanggal dibuat</th>',
+      '<th class="c-stage-age">Di tahap</th>',
       '<th class="c-docs">Dokumen</th>',
       `<th class="c-act">${lastHead}</th>`,
     ].join('');
@@ -1887,6 +2011,17 @@
     </div>`;
   }
 
+  // Umur project di tahap sekarang. Lead/QL: 3 hari kuning, 7 hari merah.
+  function stageAgeCell(p) {
+    const d = daysIn(p);
+    const tone = stageAgeTone(p);
+    const since = p.stageChangedAt ? dFull.format(new Date(p.stageChangedAt)) : '—';
+    const label = tone === 'late' ? 'Lewat 7 hari' : tone === 'warn' ? 'Lewat 3 hari' : 'Masih baru';
+    return `<td class="c-stage-age" data-th="Di tahap">
+      <span class="stage-age${tone ? ` stage-age--${tone}` : ''}" title="${esc(`${STAGES[p.stage].label} sejak ${since} · ${label}`)}">${esc(ageText(d))}</span>
+    </td>`;
+  }
+
   // Status dokumen per baris: Proses QL boleh unggah Quotation, RAB, Proposal,
   // Deal memakai aturan DOCS lengkap. Lead/Tidak Deal = belum waktunya.
   function docCell(p) {
@@ -1897,8 +2032,8 @@
         const wajib = docNeeded(d, p.type);
         const cls = f ? 'doc-chip doc-chip--ok' : wajib ? 'doc-chip doc-chip--miss' : 'doc-chip doc-chip--opt';
         const mark = f ? icon('check') : wajib ? icon('x') : icon('file');
-        const label = f ? d.label : wajib ? `${d.label} belum` : `${d.label} belum (opsional)`;
-        return `<span class="${cls}" title="${esc(`${d.label}: ${f ? `sudah diunggah (${f.name})` : wajib ? 'wajib, belum diunggah' : 'opsional, belum diunggah'}`)}">${mark}${esc(label)}</span>`;
+        const label = f ? `${d.label} · R${f.rev || 1}` : wajib ? `${d.label} belum` : `${d.label} belum (opsional)`;
+        return `<span class="${cls}" title="${esc(`${d.label}: ${f ? `Revisi ${f.rev || 1}, ${docHistory(p, d.id).length} versi (${f.name})` : wajib ? 'wajib, belum diunggah' : 'opsional, belum diunggah'}`)}">${mark}${esc(label)}</span>`;
       }).join('');
       return `<div class="doc-chips">${chips}</div>`;
     }
@@ -1913,8 +2048,8 @@
       const wajib = docNeeded(d, p.type);
       const cls = f ? 'doc-chip doc-chip--ok' : wajib ? 'doc-chip doc-chip--miss' : 'doc-chip doc-chip--opt';
       const mark = f ? icon('check') : wajib ? icon('x') : icon('file');
-      const label = f ? d.label : wajib ? `${d.label} belum` : `${d.label} belum (opsional)`;
-      return `<span class="${cls}" title="${esc(`${d.label}: ${f ? `sudah diunggah (${f.name})` : wajib ? 'wajib, belum diunggah' : 'opsional, belum diunggah'}`)}">${mark}${esc(label)}</span>`;
+      const label = f ? `${d.label} · R${f.rev || 1}` : wajib ? `${d.label} belum` : `${d.label} belum (opsional)`;
+      return `<span class="${cls}" title="${esc(`${d.label}: ${f ? `Revisi ${f.rev || 1}, ${docHistory(p, d.id).length} versi (${f.name})` : wajib ? 'wajib, belum diunggah' : 'opsional, belum diunggah'}`)}">${mark}${esc(label)}</span>`;
     }).join('');
     return head + `<div class="doc-chips">${items}</div>`;
   }
@@ -1940,12 +2075,16 @@
         ? `<span class="ql-no mono">${esc(p.qlNo)}</span>`
         : `<span class="mono muted">${esc(p.id)}</span>`}</td>`
       : '';
+    const poCell = showQl
+      ? `<td class="c-po" data-th="Nomor PO">${p.poNo ? `<span class="po-no mono">${esc(p.poNo)}</span>` : dash}</td>`
+      : '';
 
     const qlStatus = QL_BY_ID[p.qlStatus];
 
     return `<tr class="row" data-id="${esc(p.id)}" tabindex="0" aria-label="${esc(`${p.qlNo || p.id}, ${p.name}. ${STAGES[p.stage].label}. Enter untuk detail.`)}">
       ${canDel ? `<td class="c-sel"><input type="checkbox" data-select="${esc(p.id)}" aria-label="Pilih ${esc(p.name)}"${ui.selected.has(p.id) ? ' checked' : ''}></td>` : ''}
       ${idCell}
+      ${poCell}
       <td class="c-project" data-th="Project">
         <span class="t-name">${esc(p.name)}</span>
       </td>
@@ -1980,6 +2119,7 @@
       </td>
       <td class="c-owner" data-th="PIC project">${ownerCell}</td>
       <td class="c-age" data-th="Tanggal dibuat">${created}</td>
+      ${stageAgeCell(p)}
       <td class="c-docs" data-th="Dokumen">${docCell(p)}</td>
       <td class="c-act" data-th="Tindakan">${act}</td>
     </tr>`;
@@ -2218,7 +2358,7 @@
     const list = team
       .filter((u) => !q || u.name.toLowerCase().includes(q) || u.username.includes(q)
         || ROLE_LABEL[u.role].toLowerCase().includes(q))
-      .sort((a, b) => (a.id === user.id ? -1 : b.id === user.id ? 1 : a.name.localeCompare(b.name, 'id')));
+      .sort((a, b) => (a.id === user.id ? -1 : b.id === user.id ? 1 : collator.compare(a.name, b.name)));
     const admin = can('manageUsers');
     const byRole = AlurStore.ROLES.map((r) => [r.label, team.filter((u) => u.role === r.id).length]);
 
@@ -2320,7 +2460,7 @@
     rows.sort((a, b) => {
       const x = cval(a); const y = cval(b);
       const cmp = typeof x === 'number' && typeof y === 'number' ? x - y
-        : String(x).localeCompare(String(y), 'id', { numeric: true });
+        : collator.compare(String(x), String(y));
       return cmp * cs.sortDir || a.c.name.localeCompare(b.c.name, 'id');
     });
 
@@ -2455,16 +2595,7 @@
     // Proses QL boleh sudah unggah Quotation & Proposal (downstream dibawa ke Deal).
     const qlDocSection = (p.stage === 'ql' && can('editDocs', p)) ? `<section class="d-sec" id="ql-docs">
         <div class="d-sec-head"><h3>Dokumen Proses QL</h3><span class="muted">${rabRequired(p.type) ? 'Prasasti Selaras: Quotation dan RAB wajib diunggah' : 'Quotation wajib diunggah, RAB opsional, Proposal selalu opsional'}</span></div>
-        <ul class="doc-list">${['quotation', 'rab', 'proposal'].map((slot) => {
-          const d = DOCS.find((x) => x.id === slot); const f = docOf(p, slot);
-          const need = docNeeded(d, p.type);
-          return `<li class="doc-item${f ? '' : ' is-empty'}">${icon('file')}
-            <span class="doc-item-text"><span class="doc-item-label">${d.label}${need ? '' : ' <span class="opt">(opsional)</span>'}</span>
-            ${f ? `<span class="doc-item-meta mono">${esc(f.name)} · ${fmtBytes(f.size)}</span>` : `<span class="doc-item-meta ${need ? 'is-warn' : 'muted'}">${need ? 'Belum diunggah' : 'Belum diunggah (opsional)'}</span>`}</span>
-            ${f ? `<button type="button" class="btn btn-sm" data-preview-doc="${esc(p.id)}:${slot}">${icon('file')}Lihat</button>
-            <button type="button" class="btn btn-sm" data-dl-doc="${esc(p.id)}:${slot}">${icon('download')}Unduh</button>` : ''}
-          </li>`;
-        }).join('')}</ul>
+        ${docListHtml(p, ['quotation', 'rab', 'proposal'])}
         <div class="move-row" style="margin-top:8px">
           <label class="btn btn-sm btn-soft"><input type="file" data-ql-doc="quotation" accept="${DOC_ACCEPT}" class="sr-only">${icon('upload')}Unggah Quotation</label>
           <label class="btn btn-sm"><input type="file" data-ql-doc="rab" accept="${DOC_ACCEPT}" class="sr-only">${icon('upload')}Unggah RAB</label>
@@ -2478,25 +2609,12 @@
           ${can('editDocs', p) ? `<button type="button" class="link-btn link-btn--sm" data-action="edit-deal" data-id="${esc(p.id)}">Update</button>` : ''}
         </div>
         <dl class="kv">
+          ${p.poNo ? `<dt>Nomor PO</dt><dd><span class="po-no mono">${esc(p.poNo)}</span></dd>` : ''}
           <dt>Nominal deal</dt><dd><span class="mono offer offer--lg">${esc(rpFull(p.dealValue || p.offer))}</span></dd>
           ${p.dealValue && p.offer && p.dealValue !== p.offer
     ? `<dt>Selisih penawaran</dt><dd><span class="mono">${p.dealValue > p.offer ? '+' : '−'}${esc(rpFull(Math.abs(p.dealValue - p.offer)))}</span></dd>` : ''}
         </dl>
-        <ul class="doc-list">${DOCS.map((d) => {
-    const f = docOf(p, d.id);
-    const need = docNeeded(d, p.type);
-    return `<li class="doc-item${f ? '' : ' is-empty'}">
-            ${icon('file')}
-            <span class="doc-item-text">
-              <span class="doc-item-label">${d.label}${need ? '' : ' <span class="opt">(opsional)</span>'}</span>
-              ${f
-    ? `<span class="doc-item-meta mono">${esc(f.name)} · ${fmtBytes(f.size)}</span>`
-    : `<span class="doc-item-meta ${need ? 'is-warn' : 'muted'}">${need ? 'Belum diunggah' : 'Tidak diunggah'}</span>`}
-            </span>
-            ${f ? `<button type="button" class="btn btn-sm" data-preview-doc="${esc(p.id)}:${d.id}">${icon('file')}Lihat</button>
-            <button type="button" class="btn btn-sm" data-dl-doc="${esc(p.id)}:${d.id}">${icon('download')}Unduh</button>` : ''}
-          </li>`;
-  }).join('')}</ul>
+        ${docListHtml(p, DOCS.map((d) => d.id))}
       </section>` : '';
 
     const kv = [
@@ -2514,7 +2632,7 @@
         p.createdBy ? `<span class="kv-sub">oleh ${esc(teamName(p.createdBy))}</span>` : ''}`],
       locked
         ? [`${s.label} sejak`, `<span class="mono">${dFull.format(new Date(p.stageChangedAt))}</span>`]
-        : ['Di tahap ini', `<span class="${isStale(p) ? 'is-warn' : ''}">${ageText(daysIn(p))}</span>`],
+        : ['Di tahap ini', `<span class="stage-age${stageAgeTone(p) ? ` stage-age--${stageAgeTone(p)}` : ''}">${esc(ageText(daysIn(p)))}</span>`],
     ];
 
     const clientKv = [
@@ -2588,7 +2706,7 @@
       </div>
       <footer class="drawer-foot">
         ${can('deleteProject', p)
-    ? `<button type="button" class="btn btn-text-danger" data-action="delete" data-id="${esc(p.id)}">${icon('trash')}Hapus</button>`
+    ? `<button type="button" class="btn btn-text-danger" data-action="delete" data-id="${esc(p.id)}">${icon('trash')}Pindah ke sampah</button>`
     : '<span></span>'}
         ${can('editProject', p)
     ? `<button type="button" class="btn" data-action="edit" data-id="${esc(p.id)}">${icon('edit')}Edit data</button>`
@@ -2781,7 +2899,7 @@
     }
 
     // Alokasi nomor di dalam kunci lintas tab: nomor final bisa beda dari preview.
-    await withQlLock(() => {
+    await withSeqLock(async () => {
       // Muat ulang data terbaru di dalam kunci, ambil ulang project karena data bisa berubah.
       try { const fresh = AlurStore.loadData(); if (fresh.projects) {
         const freshP = fresh.projects.find((x) => x.id === id);
@@ -2792,7 +2910,12 @@
       const prev = { stage: p.stage, at: p.stageChangedAt };
       // Nomor QL hanya diterbitkan sekali, lalu melekat pada project.
       const isNew = !p.qlNo;
-      if (isNew) p.qlNo = takeQlNo(p.type);
+      if (isNew) {
+        const num = await AlurStore.allocateNumber('ql', {
+          projectId: id, type: p.type, idempotencyKey: `ql-${id}`,
+        });
+        p.qlNo = num && num.ql_no ? num.ql_no : takeQlNo(p.type);
+      }
       p.qlAt = new Date().toISOString();
       const at = applyMove(p, 'ql', { note, qlNo: p.qlNo });
       dlgQl.close();
@@ -2821,15 +2944,23 @@
     $('#doc-fields').innerHTML = DOCS.map((d) => {
       const f = dealDocs[d.id];
       const need = docNeeded(d, type);
+      const revs = docHistoryOf(f);
+      const newest = dealNewFiles.includes(f && f.id);
       return `<div class="doc">
         <div class="doc-head">
           <span class="doc-label">${d.label} ${need
         ? '<span class="req" aria-hidden="true">*</span>'
-        : '<span class="opt">(opsional)</span>'}</span>
-          ${f ? `<button type="button" class="link-btn link-btn--sm" data-doc-clear="${d.id}">Hapus</button>` : ''}
+        : '<span class="opt">(opsional)</span>'}${f && f.rev ? ` <span class="rev-tag">Rev ${f.rev}</span>` : ''}</span>
+          ${f && newest ? `<button type="button" class="link-btn link-btn--sm" data-doc-clear="${d.id}">Batal unggah</button>` : ''}
         </div>
         ${f
-        ? `<p class="doc-file">${icon('file')}<button type="button" class="doc-name doc-name--link" data-doc-dl="${d.id}">${esc(f.name)}</button><span class="doc-size mono">${fmtBytes(f.size)}</span></p>`
+        ? `<p class="doc-file">${icon('file')}<button type="button" class="doc-name doc-name--link" data-doc-dl="${d.id}">${esc(f.name)}</button><span class="doc-size mono">${fmtBytes(f.size)}</span></p>
+           ${revs.length > 1 ? `<p class="doc-revs">${revs.map((r, i) => `<button type="button" class="link-btn link-btn--sm" data-doc-dl="${d.id}:${i}">Rev ${r.rev || i + 1}</button>`).join('')}</p>` : ''}
+           <p class="field-hint">Unggah berkas baru akan menambah revisi, tidak menimpa yang lama.</p>
+           <label class="doc-drop doc-drop--replace">
+                <input type="file" data-doc="${d.id}" accept="${DOC_ACCEPT}">
+                <span>${icon('upload')}Unggah revisi baru</span>
+              </label>`
         : `<label class="doc-drop">
              <input type="file" id="doc-${d.id}" data-doc="${d.id}" accept="${DOC_ACCEPT}">
              <span>${icon('upload')}Pilih berkas ${d.label}</span>
@@ -2886,8 +3017,10 @@
     try {
       const meta = await AlurStore.putFile(file);
       dealNewFiles.push(meta.id);
-      dealDocs[slot] = meta;
       const p = find(dealFormEl.dataset.id);
+      const unsaved = dealDocs[slot] && dealNewFiles.includes(dealDocs[slot].id) ? dealDocs[slot] : null;
+      dealDocs[slot] = nextRevision(p, slot, meta, unsaved);
+      audit(p.id, `doc.${slot}.revision`, `${dealDocs[slot].name} (Rev ${dealDocs[slot].rev})`);
       renderDocFields(p ? p.type : '');
     } catch (err) {
       setErr('d-docs', `Berkas gagal disimpan: ${err.message}`);
@@ -2898,24 +3031,28 @@
     const clear = e.target.closest('[data-doc-clear]');
     if (clear) {
       const slot = clear.dataset.docClear;
+      const p = find(dealFormEl.dataset.id);
       const meta = dealDocs[slot];
       if (meta && meta.id && dealNewFiles.includes(meta.id)) {
         AlurStore.deleteFiles([meta.id]);
         dealNewFiles = dealNewFiles.filter((x) => x !== meta.id);
+        dealDocs[slot] = p ? docOf(p, slot) : null;
       }
-      delete dealDocs[slot];
-      const p = find(dealFormEl.dataset.id);
       renderDocFields(p ? p.type : '');
       clearErr('d-docs');
       return;
     }
     const dl = e.target.closest('[data-doc-dl]');
-    if (dl && !(await AlurStore.downloadFile(dealDocs[dl.dataset.docDl]))) {
-      setErr('d-docs', 'Berkas tidak ditemukan di penyimpanan browser ini.');
+    if (dl) {
+      const [slot, idx] = dl.dataset.docDl.split(':');
+      const meta = idx === undefined ? dealDocs[slot] : docHistoryOf(dealDocs[slot])[Number(idx)];
+      if (meta && !(await AlurStore.downloadFile(meta))) {
+        setErr('d-docs', 'Berkas tidak ditemukan di penyimpanan browser ini.');
+      }
     }
   });
 
-  dealFormEl.addEventListener('submit', (e) => {
+  dealFormEl.addEventListener('submit', async (e) => {
     e.preventDefault();
     const id = dealFormEl.dataset.id;
     const editing = Boolean(dealFormEl.dataset.editing);
@@ -2959,10 +3096,7 @@
       return;
     }
 
-    // Berkas lama yang diganti tidak perlu disimpan lagi.
-    const keep = new Set(Object.values(p.docs).map((f) => f.id).filter(Boolean));
-    AlurStore.deleteFiles(Object.values(before.docs || {})
-      .map((f) => f.id).filter((id) => id && !keep.has(id)));
+    // Berkas revisi lama tetap disimpan; jangan hapus apa pun saat update.
     dealNewFiles = [];
 
     if (editing) {
@@ -2977,11 +3111,25 @@
       toast(blockedReason(p.stage, 'deal'), { tone: 'warn' });
       return;
     }
-    applyMove(p, 'deal', { note: `Nominal deal ${rpFull(value)}` });
+    // Alokasi PO di dalam kunci yang sama dengan QL, antar tab tidak bentrok.
+    let moved = false;
+    await withSeqLock(async () => {
+      if (!canMove(p.stage, 'deal')) return;
+      if (!p.poNo) {
+        const num = await AlurStore.allocateNumber('po', {
+          projectId: id, idempotencyKey: `po-${id}`,
+        });
+        p.poNo = num && num.po_no ? num.po_no : takePoNo();
+        audit(p.id, 'deal.po', p.poNo);
+      }
+      applyMove(p, 'deal', { note: `Nominal deal ${rpFull(value)}` });
+      moved = true;
+    });
     dlgDeal.close();
+    if (!moved) { toast(blockedReason(p.stage, 'deal'), { tone: 'warn' }); return; }
     if (ui.page !== 'project' || (ui.tab !== 'all' && ui.tab !== 'deal')) setTab('deal');
     flash(p.id);
-    toast(`${p.qlNo || p.id} resmi Deal senilai ${rpFull(value)} dan dikunci.`, { tone: 'ok' });
+    toast(`${p.qlNo || p.id} resmi Deal dengan ${p.poNo} senilai ${rpFull(value)} dan dikunci.`, { tone: 'ok' });
   });
 
   dlgDeal.addEventListener('close', () => {
@@ -3248,7 +3396,7 @@
     const list = db.clients
       .filter((c) => !q || normName(c.name).includes(q))
       .sort((a, b) => projectsOfClient(b.id).length - projectsOfClient(a.id).length
-        || a.name.localeCompare(b.name, 'id'))
+        || collator.compare(a.name, b.name))
       .slice(0, 6);
     if (!list.length) {
       closeCompany();
@@ -3418,7 +3566,9 @@
       const twin = clientByName(name);
       if (twin && twin.id !== id) errs.push(['c-name', 'Nama perusahaan ini sudah ada di daftar client.']);
     }
-    if (waRaw && waRaw.length < 10) errs.push(['c-wa', 'Nomor terlalu pendek. Contoh: 812 3456 7890.']);
+    if (waRaw && (waRaw.length < 10 || waRaw.length > 13)) {
+      errs.push(['c-wa', 'No WhatsApp harus 10–13 digit. Contoh: 812 3456 7890.']);
+    }
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.push(['c-email', 'Format email belum benar.']);
     if (errs.length) {
       errs.forEach(([f, m]) => setErr(f, m));
@@ -3553,6 +3703,7 @@
     } else {
       picked = [user.id]; // default: pembuat project jadi PIC
     }
+    F('f-end').min = F('f-start').value || '';
     // Tipe project tidak boleh diubah setelah nomor QL terbit.
     const lockType = p && hasQl(p);
     formEl.querySelectorAll('input[name="ptype"]').forEach((r) => { r.disabled = lockType; });
@@ -3658,7 +3809,9 @@
     if (!clientInput.name) errs.push(['f-company', 'Nama perusahaan wajib diisi.']);
     if (!clientInput.pic) errs.push(['f-pic', 'Nama PIC client wajib diisi.']);
     if (!waRaw) errs.push(['f-wa', 'No WhatsApp wajib diisi.']);
-    else if (waRaw.length < 10) errs.push(['f-wa', 'Nomor terlalu pendek. Contoh: 812 3456 7890.']);
+    else if (waRaw.length < 10 || waRaw.length > 13) {
+      errs.push(['f-wa', 'No WhatsApp harus 10–13 digit. Contoh: 812 3456 7890.']);
+    }
     if (clientInput.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientInput.email)) errs.push(['f-email', 'Format email belum benar.']);
     if (!data.owners.length) errs.push(['f-owner', 'Pilih minimal satu PIC project.']);
 
@@ -3710,30 +3863,96 @@
     });
   });
 
-  async function deleteProject(id) {
-    const p = find(id);
-    if (!p) return;
-    const ok = await confirmDialog({
-      title: `Hapus ${p.qlNo || p.id}?`,
-      body: 'Kamu yakin akan menghapus ini? Data dan dokumennya akan ikut terhapus. Tindakan ini tidak bisa dibatalkan.',
-      okLabel: 'Hapus',
-      tone: 'danger',
-      requireText: 'yakin',
-    });
-    if (!ok) return;
-    const fileIds = Object.values(p.docs || {}).map((m) => m && m.id).filter(Boolean);
-    if (fileIds.length) AlurStore.deleteFiles(fileIds);
-    db.audit = db.audit.filter((a) => a.projectId !== id);
-    db.projects = db.projects.filter((x) => x.id !== id);
-    save();
-    if (ui.detailId === id && dlgDetail.open) dlgDetail.close();
-    render();
-    toast(`${p.qlNo || id} dihapus permanen.`);
+  // ----- Tempat Sampah -----
+  // Hapus biasa hanya menandai deletedAt. Berkas tetap di IndexedDB supaya
+  // project bisa dipulihkan utuh. Pembersihan permanen lewat jalur Admin.
+  function trashView() {
+    if (!can('deleteProject')) {
+      return `<section class="stage"><div class="zero">Tempat Sampah hanya untuk role ${esc(roleNames('deleteProject'))}. Role Anda: ${esc(ROLE_LABEL[user.role])}.</div></section>`;
+    }
+    const all = trashedProjects().slice()
+      .sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt)));
+    const q = ui.trash.query.trim().toLowerCase();
+    const items = q ? all.filter((p) => matches(p, q)) : all;
+    const pg = paginate(items, ui.trashList);
+    const canRestore = can('restoreProject');
+    const canPurge = can('deleteForever');
+    const allOnPage = items.length > 0 && pg.items.every((p) => ui.trash.selected.has(p.id));
+    const head = `<header class="view-head view-head--split">
+      <div>
+        <h1 class="view-title">${icon('trash')} Tempat Sampah</h1>
+        <p class="view-desc">Project yang dihapus disimpan di sini beserta dokumennya. Bisa dipulihkan kapan saja. Hanya Admin yang bisa menghapus permanen.</p>
+      </div>
+      ${canPurge && all.length ? '<button type="button" class="btn btn-sm btn-danger" data-action="empty-trash">Kosongkan sampah</button>' : ''}
+    </header>
+    <section class="list-tools" aria-label="Cari project di tempat sampah">
+      <label class="flt"><span>Cari</span><input id="trash-search" type="search" value="${esc(ui.trash.query)}" placeholder="Nama, nomor QL/PO, client, atau PIC" autocomplete="off"></label>
+      <span class="flt-note">${nf.format(all.length)} project di sampah.</span>
+    </section>`;
+    if (!all.length) return `${head}<div class="zero">Tempat sampah kosong.</div>`;
+    if (!items.length) {
+      return `${head}<div class="zero">Tidak ada yang cocok dengan pencarian.<button type="button" class="link-btn" data-action="clear-trash-search">Hapus pencarian</button></div>`;
+    }
+    const bulk = ui.trash.selected.size ? `<div class="bulk-bar" role="region" aria-label="Aksi massal sampah">
+      <span class="bulk-count"><b>${ui.trash.selected.size}</b> project dipilih</span>
+      <span class="bulk-actions">
+        ${canRestore ? `<button type="button" class="btn btn-sm" data-action="restore-selected-trash">Pulihkan yang dipilih</button>` : ''}
+        ${canPurge ? `<button type="button" class="btn btn-sm btn-danger" data-action="delete-selected-trash">${icon('trash')}Hapus permanen yang dipilih</button>` : ''}
+        <button type="button" class="btn btn-sm btn-ghost" data-action="clear-trash-selection">Batal pilihan</button>
+      </span>
+    </div>` : '';
+    const rows = pg.items.map((p) => {
+      const when = p.deletedAt ? dFull.format(new Date(p.deletedAt)) : '—';
+      const by = p.deletedBy ? teamName(p.deletedBy) : '—';
+      return `<tr>
+        <td class="c-sel"><input type="checkbox" data-trash-select="${esc(p.id)}" aria-label="Pilih ${esc(p.name)}"${ui.trash.selected.has(p.id) ? ' checked' : ''}></td>
+        <td class="c-ql">${p.qlNo ? `<span class="ql-no mono">${esc(p.qlNo)}</span>` : `<span class="mono muted">${esc(p.id)}</span>`}</td>
+        <td class="c-po">${p.poNo ? `<span class="po-no mono">${esc(p.poNo)}</span>` : '<span class="muted">—</span>'}</td>
+        <td class="c-project"><span class="t-name">${esc(p.name)}</span></td>
+        <td class="c-client">${esc(clientOf(p).name)}</td>
+        <td class="c-stage"><span class="badge badge--${p.stage}">${STAGES[p.stage].label}</span></td>
+        <td class="c-age"><span class="mono nowrap">${esc(when)}</span></td>
+        <td class="c-owner">${esc(by)}</td>
+        <td class="c-act"><div class="row-act">
+          ${canRestore ? `<button type="button" class="btn btn-sm" data-action="restore-project" data-id="${esc(p.id)}">Pulihkan</button>` : ''}
+          ${canPurge ? `<button type="button" class="btn btn-sm btn-text-danger" data-action="delete-forever" data-id="${esc(p.id)}">${icon('trash')}Hapus permanen</button>` : '<span class="muted">Admin saja</span>'}
+        </div></td>
+      </tr>`;
+    }).join('');
+    return `${head}${bulk}<div class="table-wrap"><table class="table table--trash">
+      <thead><tr>
+        <th class="c-sel"><input type="checkbox" data-trash-select-all aria-label="Pilih semua di halaman ini"${allOnPage ? ' checked' : ''}></th>
+        <th class="c-ql">Nomor QL</th><th class="c-po">Nomor PO</th><th class="c-project">Project</th>
+        <th class="c-client">Client</th><th class="c-stage">Tahap</th><th class="c-age">Dihapus pada</th>
+        <th class="c-owner">Oleh</th><th class="c-act">Tindakan</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>${pagerHtml(ui.trashList, pg.total, pg.pages, 'sampah')}`;
   }
 
-  // Hapus banyak project sekaligus (Manager/Admin) = permanen langsung.
+  async function deleteProject(id) {
+    const p = find(id);
+    if (!p || trashed(p)) return;
+    const ok = await confirmDialog({
+      title: `Hapus ${p.qlNo || p.id}?`,
+      body: `“${p.name}” akan dipindah ke Tempat Sampah beserta dokumennya. Data bisa dipulihkan; hanya Admin yang bisa menghapus permanen.`,
+      okLabel: 'Pindahkan ke sampah',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    p.deletedAt = new Date().toISOString();
+    p.deletedBy = user.id;
+    audit(p.id, 'project.trash', '');
+    ui.selected.delete(id);
+    if (ui.detailId === id && dlgDetail.open) dlgDetail.close();
+    save();
+    render();
+    toast(`${p.qlNo || id} dipindah ke Tempat Sampah.`, { tone: 'ok' });
+  }
+
+  // Hapus banyak project sekaligus (Manager/Admin) = pindah ke Tempat Sampah.
   async function deleteSelected() {
-    const ids = [...ui.selected].filter((id) => find(id));
+    const ids = [...ui.selected].filter((id) => find(id) && !trashed(find(id)));
     if (!ids.length) { ui.selected.clear(); renderView(); return; }
     const names = ids.slice(0, 8).map((id) => {
       const p = find(id);
@@ -3741,52 +3960,214 @@
     }).join(', ');
     const more = ids.length > 8 ? `, dan ${ids.length - 8} project lain` : '';
     const ok = await confirmDialog({
-      title: `Hapus ${ids.length} project permanen?`,
-      body: `${names}${more}. Kamu yakin akan menghapus ini? Data dan dokumennya akan ikut terhapus.`,
-      okLabel: `Hapus`,
+      title: `Hapus ${ids.length} project?`,
+      body: `${names}${more}. Project beserta dokumennya akan dipindah ke Tempat Sampah dan bisa dipulihkan.`,
+      okLabel: 'Pindahkan ke sampah',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    const at = new Date().toISOString();
+    ids.forEach((id) => {
+      const p = find(id);
+      p.deletedAt = at;
+      p.deletedBy = user.id;
+      audit(id, 'project.trash', '');
+    });
+    if (ui.detailId && ui.selected.has(ui.detailId) && dlgDetail.open) dlgDetail.close();
+    ui.selected.clear();
+    save();
+    render();
+    toast(`${ids.length} project dipindah ke Tempat Sampah.`, { tone: 'ok' });
+  }
+
+  function restoreProjects(ids) {
+    const list = ids.map(find).filter((p) => p && trashed(p));
+    if (!list.length) return 0;
+    list.forEach((p) => {
+      delete p.deletedAt;
+      delete p.deletedBy;
+      audit(p.id, 'project.restore', '');
+    });
+    list.forEach((p) => { ui.trash.selected.delete(p.id); ui.selected.delete(p.id); });
+    return list.length;
+  }
+
+  function restoreProject(id) {
+    if (!can('restoreProject')) { toast(denyReason('restoreProject'), { tone: 'warn' }); return; }
+    const p = find(id);
+    if (!p || !trashed(p)) return;
+    if (!restoreProjects([id])) return;
+    save();
+    render();
+    toast(`${p.qlNo || id} dipulihkan ke pipeline.`);
+  }
+
+  function restoreSelectedTrash() {
+    if (!can('restoreProject')) { toast(denyReason('restoreProject'), { tone: 'warn' }); return; }
+    const n = restoreProjects([...ui.trash.selected]);
+    if (!n) { ui.trash.selected.clear(); renderView(); return; }
+    save();
+    render();
+    toast(`${n} project dipulihkan ke pipeline.`, { tone: 'ok' });
+  }
+
+  function purgeProjects(ids) {
+    const list = ids.map(find).filter((p) => p && trashed(p));
+    if (!list.length) return 0;
+    const idSet = new Set(list.map((p) => p.id));
+    const fileIds = list.flatMap(allDocIds);
+    if (fileIds.length) AlurStore.deleteFiles(fileIds);
+    db.audit = db.audit.filter((a) => !idSet.has(a.projectId));
+    db.projects = db.projects.filter((p) => !idSet.has(p.id));
+    const label = list.slice(0, 5).map((p) => p.qlNo || p.id).join(', ');
+    audit('', 'project.delete-forever', `${list.length} project: ${label}${list.length > 5 ? ' …' : ''} oleh ${user.name}`);
+    if (ui.detailId && idSet.has(ui.detailId) && dlgDetail.open) dlgDetail.close();
+    idSet.forEach((id) => { ui.trash.selected.delete(id); ui.selected.delete(id); });
+    return list.length;
+  }
+
+  async function deleteForever(id) {
+    if (!can('deleteForever')) { toast(denyReason('deleteForever'), { tone: 'warn' }); return; }
+    const p = find(id);
+    if (!p || !trashed(p)) return;
+    const ok = await confirmDialog({
+      title: `Hapus permanen ${p.qlNo || p.id}?`,
+      body: `“${p.name}” dan dokumennya akan dihapus permanen dari Tempat Sampah. Tindakan ini tidak bisa dibatalkan.`,
+      okLabel: 'Hapus permanen',
       tone: 'danger',
       requireText: 'yakin',
     });
     if (!ok) return;
-    const fileIds = ids.flatMap((id) => Object.values(find(id).docs || {})
-      .map((m) => m && m.id).filter(Boolean));
-    if (fileIds.length) AlurStore.deleteFiles(fileIds);
-    const idSet = new Set(ids);
-    db.projects = db.projects.filter((x) => !idSet.has(x.id));
-    db.audit = db.audit.filter((a) => !idSet.has(a.projectId));
-    if (ui.detailId && idSet.has(ui.detailId) && dlgDetail.open) dlgDetail.close();
-    ui.selected.clear();
+    purgeProjects([id]);
     save();
     render();
-    toast(`${ids.length} project dihapus permanen.`);
+    toast(`${p.qlNo || id} dihapus permanen.`);
   }
 
-  // Reset semua project (Admin saja, wajib password reset).
+  async function deleteSelectedTrash() {
+    if (!can('deleteForever')) { toast(denyReason('deleteForever'), { tone: 'warn' }); return; }
+    const ids = [...ui.trash.selected].filter((id) => find(id) && trashed(find(id)));
+    if (!ids.length) { ui.trash.selected.clear(); renderView(); return; }
+    const names = ids.slice(0, 8).map((id) => {
+      const p = find(id);
+      return `“${p.name}” (${p.qlNo || p.id})`;
+    }).join(', ');
+    const more = ids.length > 8 ? `, dan ${ids.length - 8} project lain` : '';
+    const ok = await confirmDialog({
+      title: `Hapus permanen ${ids.length} project?`,
+      body: `${names}${more}. Data dan dokumennya akan dihapus permanen. Tindakan ini tidak bisa dibatalkan.`,
+      okLabel: 'Hapus permanen',
+      tone: 'danger',
+      requireText: 'yakin',
+    });
+    if (!ok) return;
+    const n = purgeProjects(ids);
+    save();
+    render();
+    toast(`${n} project dihapus permanen.`);
+  }
+
+  async function emptyTrash() {
+    if (!can('deleteForever')) { toast(denyReason('deleteForever'), { tone: 'warn' }); return; }
+    const ids = trashedProjects().map((p) => p.id);
+    if (!ids.length) { toast('Tempat sampah sudah kosong.', { tone: 'warn' }); return; }
+    const ok = await confirmDialog({
+      title: `Kosongkan sampah (${ids.length} project)?`,
+      body: `Semua project di Tempat Sampah beserta dokumennya akan dihapus permanen. Project di pipeline tidak tersentuh. Tindakan ini tidak bisa dibatalkan.`,
+      okLabel: 'Kosongkan sampah',
+      tone: 'danger',
+      requireText: 'yakin',
+    });
+    if (!ok) return;
+    const n = purgeProjects(ids);
+    save();
+    render();
+    toast(`${n} project dihapus permanen dari sampah.`);
+  }
+
+  // Reset semua data: project, client, dan karyawan non-admin (Admin saja).
   async function resetAllProjects() {
     if (!can('resetData')) { toast(denyReason('resetData'), { tone: 'warn' }); return; }
-    if (!db.projects.length) { toast('Tidak ada project untuk dihapus.', { tone: 'warn' }); return; }
+    const otherStaff = team.filter((u) => u.role !== 'admin').length;
+    if (!db.projects.length && !db.clients.length && !otherStaff) {
+      toast('Tidak ada project, client, atau karyawan non-admin untuk dihapus.', { tone: 'warn' });
+      return;
+    }
     const total = db.projects.length;
+    const totalClients = db.clients.length;
     const ok = await confirmDialog({
-      title: `Reset semua project (${total})?`,
-      body: 'Semua project beserta dokumennya dihapus permanen dan nomor QL mulai dari 0001 lagi. Client, karyawan, dan master data tetap ada. Tindakan ini tidak bisa dibatalkan.',
+      title: `Reset semua data?`,
+      body: `${total} project, ${totalClients} client, dan ${otherStaff} karyawan non-admin akan dihapus permanen beserta dokumennya. Akun Admin, Master Data, dan sesi Anda tetap. Nomor QL/PO mulai dari 0001.`,
       okLabel: 'Reset semua',
       tone: 'danger',
       requirePassword: RESET_DATA_PASSWORD,
     });
     if (!ok) return;
-    const fileIds = db.projects.flatMap((p) => Object.values(p.docs || {}).map((m) => m && m.id).filter(Boolean));
+    const fileIds = db.projects.flatMap(allDocIds);
     if (fileIds.length) AlurStore.deleteFiles(fileIds);
+    const deletedStaff = AlurStore.deleteNonAdminUsers();
+    team = AlurStore.publicUsers();
     db.projects = [];
+    db.clients = [];
     db.seq = 0;
     db.qlSeq = {};
+    db.poSeq = 0;
     db.audit = [];
     ui.selected.clear();
+    ui.trash.selected.clear();
+    ui.clientList.page = 1;
+    ui.clientList.status = '';
     if (ui.detailId && dlgDetail.open) dlgDetail.close();
-    audit('', 'project.reset-all', `${total} project dihapus`);
+    audit('', 'data.reset', `${total} project, ${totalClients} client, ${deletedStaff} karyawan dihapus`);
     save();
     render();
-    toast(`${total} project di-reset.`);
+    toast(`${total} project, ${totalClients} client, ${deletedStaff} karyawan di-reset.`);
   }
+
+  // Backup satu file JSON: project, akun, client/master, dan berkas IndexedDB.
+  async function backupData() {
+    if (!can('resetData')) { toast(denyReason('resetData'), { tone: 'warn' }); return; }
+    try {
+      const payload = await AlurStore.backupAll();
+      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `prasasti-pms-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      toast(`Backup: ${(payload.data && payload.data.projects || []).length} project, ${payload.users.length} akun, ${payload.files.length} berkas.`, { tone: 'ok' });
+    } catch (err) { toast(`Gagal membuat backup: ${err.message}`, { tone: 'warn' }); }
+  }
+
+  async function restoreFromFile(file) {
+    if (!can('resetData')) { toast(denyReason('resetData'), { tone: 'warn' }); return; }
+    let payload;
+    try { payload = JSON.parse(await file.text()); }
+    catch { toast('File bukan JSON yang valid.', { tone: 'warn' }); return; }
+    const ok = await confirmDialog({
+      title: 'Pulihkan dari backup?',
+      body: `File: ${file.name}. Seluruh project, akun, client, master, dan berkas saat ini akan ditimpa isi backup. Sesi akan keluar. Tindakan ini tidak bisa dibatalkan.`,
+      okLabel: 'Pulihkan',
+      tone: 'danger',
+      requireText: 'yakin',
+    });
+    if (!ok) return;
+    try {
+      const r = await AlurStore.restoreAll(payload);
+      toast(`Pulihkan ${r.projects} project, ${r.users} akun, ${r.files} berkas.`, { tone: 'ok' });
+      setTimeout(() => location.replace('login.html'), 800);
+    } catch (err) { toast(`Gagal memulihkan: ${err.message}`, { tone: 'warn' }); }
+  }
+
+  restoreFileEl.addEventListener('change', () => {
+    const file = restoreFileEl.files && restoreFileEl.files[0];
+    restoreFileEl.value = '';
+    if (file) restoreFromFile(file);
+  });
+
   // ---------------------------------------------------------------------------
   // Akun karyawan
   // ---------------------------------------------------------------------------
@@ -3843,6 +4224,14 @@
   ['u-name', 'u-username', 'u-password', 'u-old-password'].forEach((id) => { const el = F(id); if (el) el.addEventListener('input', () => clearErr(id)); });
   $('#u-role-group').addEventListener('change', () => clearErr('u-role'));
 
+  // Password acak untuk akun baru. Karakter ambigu dibuang.
+  function randomPassword(length = 10) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    const bytes = new Uint8Array(length);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => chars[b % chars.length]).join('');
+  }
+
   function openBulkUser() {
     if (!can('manageUsers')) { toast(denyReason('manageUsers'), { tone: 'warn' }); return; }
     bulkUserForm.reset();
@@ -3863,16 +4252,18 @@
     const results = [];
     for (const line of lines) {
       const parts = line.split(',').map((s) => s.trim());
-      const [name, usernameRaw, password, roleRaw] = parts;
+      const [name, usernameRaw, passwordRaw, roleRaw] = parts;
       const role = (roleRaw || 'user').toLowerCase();
+      const generated = !passwordRaw;
+      const password = passwordRaw || randomPassword();
       const check = (msg) => results.push({ ok: false, line, msg });
       if (!name || name.length < 2) { check(`Nama "${name || '—'}" tidak valid.`); continue; }
       if (!usernameRaw || !/^[a-z0-9._-]{3,40}$/.test(usernameRaw.toLowerCase())) { check(`Username "${usernameRaw || '—'}" tidak valid.`); continue; }
-      if (!password || password.length < 6) { check(`Password untuk "${usernameRaw}" minimal 6 karakter.`); continue; }
+      if (password.length < 6) { check(`Password untuk "${usernameRaw}" minimal 6 karakter.`); continue; }
       if (!['user', 'finance', 'manager', 'admin'].includes(role)) { check(`Role "${roleRaw}" tidak dikenal.`); continue; }
       try {
         await AlurStore.register({ name, username: usernameRaw.toLowerCase(), password, role });
-        results.push({ ok: true, line: `${name} (@${usernameRaw.toLowerCase()})` });
+        results.push({ ok: true, line: `${name} (@${usernameRaw.toLowerCase()}) — password: ${password}${generated ? ' (acak)' : ''}` });
       } catch (err) {
         results.push({ ok: false, line, msg: err.message || 'Gagal.' });
       }
@@ -3921,7 +4312,13 @@
     submit.disabled = true;
     try {
       if (editing) {
-        const saved = await AlurStore.updateUser(editing, { name, username, password, role });
+        let saved;
+        if (editing === user.id && password) {
+          await AlurStore.changeOwnPassword(password);
+          saved = await AlurStore.updateUser(editing, { name, username, role });
+        } else {
+          saved = await AlurStore.updateUser(editing, { name, username, password, role });
+        }
         team = AlurStore.publicUsers();
         if (editing === user.id) user = saved;
         audit(editing, 'user.update', saved.name);
@@ -4024,11 +4421,12 @@
     if (slug === 'clients') return { page: 'clients', tab: 'all' };
     if (slug === 'laporan') return { page: 'report', tab: 'all' };
     if (slug === 'master-data') return { page: 'master', tab: 'all' };
-    if (!slug || slug === 'semua' || slug === 'sampah') return { page: 'project', tab: 'all' };
+    if (slug === 'sampah') return { page: 'trash', tab: 'all' };
+    if (!slug || slug === 'semua') return { page: 'project', tab: 'all' };
     return { page: 'project', tab: ORDER.find((k) => STAGES[k].slug === slug) || 'all' };
   }
 
-  const PAGE_SLUG = { clients: '#/clients', report: '#/laporan', staff: '#/karyawan', master: '#/master-data' };
+  const PAGE_SLUG = { clients: '#/clients', report: '#/laporan', staff: '#/karyawan', trash: '#/sampah', master: '#/master-data' };
 
   // Pencarian dipakai bersama; kosongkan saat pindah halaman agar tidak terbawa.
   function resetSearch() {
@@ -4085,7 +4483,7 @@
   // ---------------------------------------------------------------------------
   document.addEventListener('click', async (e) => {
     const t = e.target;
-    if (e.target.matches('[data-select], [data-select-all]')) return;
+    if (e.target.matches('[data-select], [data-select-all], [data-trash-select], [data-trash-select-all]')) return;
 
     const closeBtn = t.closest('[data-close]');
     if (closeBtn) {
@@ -4129,7 +4527,7 @@
     const pgBtn = t.closest('[data-page-nav]');
     if (pgBtn && !pgBtn.disabled) {
       const [scope, val] = pgBtn.dataset.pageNav.split(':');
-      const st = scope === 'client' ? ui.clientList : ui.list;
+      const st = scope === 'client' ? ui.clientList : scope === 'sampah' ? ui.trashList : ui.list;
       if (val === 'prev') st.page = Math.max(1, st.page - 1);
       else if (val === 'next') st.page += 1;
       else st.page = Number(val) || 1;
@@ -4154,6 +4552,20 @@
       else if (a === 'edit-deal') openGuarded('editDocs', () => openDealForm(act.dataset.id, true), find(act.dataset.id));
       else if (a === 'delete') openGuarded('deleteProject', () => deleteProject(act.dataset.id), find(act.dataset.id));
       else if (a === 'delete-selected') openGuarded('deleteProject', () => deleteSelected());
+      else if (a === 'restore-project') restoreProject(act.dataset.id);
+      else if (a === 'delete-forever') deleteForever(act.dataset.id);
+      else if (a === 'restore-selected-trash') restoreSelectedTrash();
+      else if (a === 'delete-selected-trash') deleteSelectedTrash();
+      else if (a === 'clear-trash-selection') { ui.trash.selected.clear(); renderView(); }
+      else if (a === 'clear-trash-search') {
+        ui.trash.query = '';
+        ui.trashList.page = 1;
+        renderView();
+        $('#trash-search')?.focus();
+      }
+      else if (a === 'empty-trash') emptyTrash();
+      else if (a === 'backup-data') backupData();
+      else if (a === 'restore-data') restoreFileEl.click();
       else if (a === 'reset-data') resetAllProjects();
       else if (a === 'clear-selection') { ui.selected.clear(); renderView(); }
       else if (a === 'master-add-type') masterAddRow('type');
@@ -4211,6 +4623,7 @@
       else if (a === 'open-client') openClientForm(act.dataset.id);
       else if (a === 'delete-client') openGuarded('editClient', () => deleteClient(act.dataset.id));
       else if (a === 'sample') openGuarded('createProject', loadSample);
+      else if (a === 'sample-data') loadSampleFromMenu();
       else if (a === 'export-excel') exportExcel();
       else if (a === 'sort-dir') { ui.list.sortDir *= -1; ui.list.page = 1; saveUiPrefs(); renderView(); }
       else if (a === 'c-sort-dir') { ui.clientList.sortDir *= -1; ui.clientList.page = 1; renderView(); }
@@ -4241,9 +4654,9 @@
     // Unduhan berkas: isinya ada di IndexedDB, jadi diambil saat diklik.
     const pvDoc = t.closest('[data-preview-doc]');
     if (pvDoc) {
-      const [pid, slot] = pvDoc.dataset.previewDoc.split(':');
+      const [pid, slot, idx] = pvDoc.dataset.previewDoc.split(':');
       const proj = find(pid);
-      const meta = proj ? docOf(proj, slot) : null;
+      const meta = proj ? docRefMeta(proj, slot, idx) : null;
       if (!meta) return;
       if (!(await AlurStore.previewFile(meta))) {
         toast('Preview hanya untuk PDF dan gambar. Berkas lain akan diunduh.', { tone: 'warn' });
@@ -4253,9 +4666,9 @@
     }
     const dlDoc = t.closest('[data-dl-doc]');
     if (dlDoc) {
-      const [pid, slot] = dlDoc.dataset.dlDoc.split(':');
+      const [pid, slot, idx] = dlDoc.dataset.dlDoc.split(':');
       const proj = find(pid);
-      if (proj && !(await AlurStore.downloadFile(docOf(proj, slot)))) {
+      if (proj && !(await AlurStore.downloadFile(docRefMeta(proj, slot, idx)))) {
         toast('Berkas tidak ditemukan di penyimpanan browser ini.', { tone: 'warn' });
       }
       return;
@@ -4310,13 +4723,14 @@
     }
   });
 
+  let searchTimer = 0;
   searchEl.addEventListener('input', () => {
     ui.query = searchEl.value;
     ui.list.page = 1;
     ui.clientList.page = 1;
-    renderView();
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(renderView, 120);
   });
-  let searchTimer = 0;
   searchEl.addEventListener('blur', () => {
     if (ui.query.trim()) pushSearchHistory(ui.query);
   });
@@ -4398,17 +4812,41 @@
     try {
       const meta = await AlurStore.putFile(file);
       p.docs = p.docs || {};
-      const old = p.docs[slot];
-      p.docs[slot] = { ...meta, at: new Date().toISOString(), by: user.id };
-      audit(p.id, `doc.${slot}.upload`, meta.name);
-      if (old && old.id) AlurStore.deleteFiles([old.id]);
+      p.docs[slot] = nextRevision(p, slot, meta);
+      audit(p.id, `doc.${slot}.revision`, `${meta.name} (Rev ${p.docs[slot].rev})`);
       save(); renderDetail();
-      toast(`${DOCS.find((d) => d.id === slot).label} diunggah di Proses QL.`, { tone: 'ok' });
+      toast(`${DOCS.find((d) => d.id === slot).label} tersimpan sebagai Revisi ${p.docs[slot].rev}.`, { tone: 'ok' });
     } catch (err) { toast(`Gagal unggah: ${err.message}`, { tone: 'warn' }); }
+  });
+
+  let trashSearchTimer = 0;
+  viewEl.addEventListener('input', (e) => {
+    if (e.target.id !== 'trash-search') return;
+    ui.trash.query = e.target.value;
+    ui.trashList.page = 1;
+    clearTimeout(trashSearchTimer);
+    trashSearchTimer = setTimeout(() => {
+      renderView();
+      $('#trash-search')?.focus();
+    }, 120);
   });
 
   viewEl.addEventListener('change', (e) => {
     const el = e.target;
+    if (el.hasAttribute('data-trash-select-all')) {
+      viewEl.querySelectorAll('[data-trash-select]').forEach((cb) => {
+        if (el.checked) ui.trash.selected.add(cb.dataset.trashSelect);
+        else ui.trash.selected.delete(cb.dataset.trashSelect);
+      });
+      renderView();
+      return;
+    }
+    if (el.dataset.trashSelect) {
+      if (el.checked) ui.trash.selected.add(el.dataset.trashSelect);
+      else ui.trash.selected.delete(el.dataset.trashSelect);
+      renderView();
+      return;
+    }
     if (el.hasAttribute('data-select-all')) {
       viewEl.querySelectorAll('[data-select]').forEach((cb) => {
         if (el.checked) ui.selected.add(cb.dataset.select);
@@ -4502,22 +4940,51 @@
     if (e.key === AlurStore.KEYS.data) {
       db = AlurStore.loadData();
       db.projects = db.projects.filter(valid);
+      rebuildIndexes();
       render();
     } else if (e.key === AlurStore.KEYS.users) {
       team = AlurStore.publicUsers();
       const me = team.find((u) => u.id === user.id);
-      if (me) user = me;
+      if (!me) { location.replace('login.html'); return; }
+      user = me;
       render();
     } else if (e.key === AlurStore.KEYS.session && !AlurStore.currentUser()) {
       location.replace('login.html');
     }
   });
 
+  // Tombol permanen di sidebar. Bisa dipakai walau pipeline sudah terisi.
+  async function loadSampleFromMenu() {
+    if (!can('resetData')) { toast(denyReason('resetData'), { tone: 'warn' }); return; }
+    const existing = db.projects.length;
+    if (existing) {
+      const ok = await confirmDialog({
+        title: `Muat data contoh (${existing} project)?`,
+        body: `Semua project yang ada akan diganti data contoh. Dokumennya ikut dihapus. Client, karyawan, dan master data tetap ada. Ketik yakin untuk melanjutkan.`,
+        okLabel: 'Ganti dengan data contoh',
+        tone: 'danger',
+        requireText: 'yakin',
+      });
+      if (!ok) return;
+      const fileIds = db.projects.flatMap(allDocIds);
+      if (fileIds.length) AlurStore.deleteFiles(fileIds);
+      db.projects = [];
+      db.seq = 0;
+      db.qlSeq = {};
+      db.poSeq = 0;
+      audit('', 'project.sample-reset', `${existing} project diganti`);
+      if (ui.detailId && dlgDetail.open) dlgDetail.close();
+      ui.selected.clear();
+      ui.trash.selected.clear();
+    }
+    loadSample();
+  }
+
   // ---------------------------------------------------------------------------
   // Data contoh
   // ---------------------------------------------------------------------------
   function loadSample() {
-    if (db.projects.length) {
+    if (aliveProjects().length) {
       toast('Data contoh hanya bisa dimuat saat pipeline masih kosong.', { tone: 'warn' });
       return;
     }
@@ -4551,6 +5018,10 @@
       ['Team Building Yayasan Cendekia', 'Prasasti Selaras', 'Team Building', 0, 0, 'cold', 'Iklan Tiktok', 'Yayasan Cendekia', 'Pak Anton', '6281270001290', '', 'Tanggal kegiatan belum ditentukan client. Masih membandingkan beberapa vendor.', pick(2, 4), [['lead', 11]], '', 0],
       ['Awarding Night Nusantara Food', 'Prasasti Selaras', 'Awarding', 90, 90, 'hot', 'Direct Selling', 'PT Nusantara Food', 'Mbak Dewi', '6282155129081', 'dewi@nusantarafood.id', 'Kapasitas 300 tamu.', pick(0), [['lead', 6]], '', 0],
       ['Hampers Anggrek Lebaran', 'Mutiari Garden', 'Hampers Anggrek', 120, 120, 'cold', 'Instagram', 'PT Hijau Lestari', 'Bu Ratna', '6285710203344', '', 'Baru menanyakan estimasi biaya per unit.', pick(3), [['lead', 3]], '', 0],
+      ['Demo Lead 3 Hari - Kuning', 'Mutiari Decoration', '', 0, 0, 'hot', 'Direct Selling', 'PT Demo Cepat', 'Bu Demo', '628111100001', '', 'Contoh lead 3 hari belum masuk Proses QL.', pick(0), [['lead', 3]], '', 0],
+      ['Demo Lead 7 Hari - Merah', 'Wood and Steel', 'Booth', 0, 0, 'cold', 'SEO', 'PT Demo Lambat', 'Pak Demo', '628111100002', '', 'Contoh lead 7 hari belum bergerak.', pick(1), [['lead', 7]], '', 0],
+      ['Demo QL 3 Hari - Kuning', 'Prasasti Lestari', 'CSR', 8, 8, 'hot', 'Iklan Website', 'PT Demo QL', 'Bu QL', '628111100003', '', 'Contoh QL 3 hari belum Deal.', pick(2), [['lead', 12], ['ql', 3]], 'proses', 75e6],
+      ['Demo QL 7 Hari - Merah', 'Prasasti Selaras', 'Family Gathering', 14, 14, 'hot', 'Repeat Order', 'PT Demo QL Lama', 'Pak QL', '628111100004', '', 'Contoh QL 7 hari belum Deal.', pick(3), [['lead', 16], ['ql', 7]], 'belum', 120e6],
       ['Outing Divisi Produksi', 'Prasasti Selaras', 'Employee Gathering', 0, 0, 'hot', 'Repeat Order', 'PT Sinar Abadi Logistik', 'Pak Dimas', '6281288901123', 'dimas@sinarabadi.co.id', 'Jadwal menunggu kalender HRD.', pick(1), [['lead', 1]], '', 0],
       ['Aquascape Ruang Tunggu', 'Mutiari Garden', 'Aquascape', 35, 38, 'cold', 'SEO', 'PT Baja Mandiri', 'Pak Hendra', '628118904421', 'hendra@bajamandiri.com', 'Repeat order setelah Family Gathering.', pick(4, 0), [['lead', 0]], '', 0],
     ];
@@ -4570,6 +5041,7 @@
       // Tanggal kegiatan boleh kosong; offset 0 pada data contoh berarti belum dijadwalkan.
       const scheduled = startOff !== 0 || endOff !== 0;
       const dealValue = last.stage === 'deal' ? offer : 0;
+      const poNo = last.stage === 'deal' ? takePoNo() : '';
       // Beberapa baris memakai perusahaan yang sama, jadi client-nya dipakai ulang.
       const client = upsertClient({ name: company, pic: clientPic, wa, email });
       if (last.stage === 'deal') dealSeen += 1;
@@ -4580,12 +5052,13 @@
         owners, stage: last.stage,
         qlNo, qlStatus: qlNo ? (qlStatus || 'belum') : '', qlNote: '',
         qlAt: qlStep ? iso(qlStep[1], i) : '', offer: qlNo ? offer : 0,
-        dealValue,
+        dealValue, poNo,
         docs: {},
         createdAt: history[0].at, createdBy: history[0].by,
         stageChangedAt: last.at, history,
       });
     });
+    audit('', 'project.sample', `${rows.length} project contoh dimuat`);
     save();
     render();
     toast(`${rows.length} project contoh dimuat.`, { tone: 'ok' });

@@ -66,6 +66,10 @@ async function authPreHandler(request, reply) {
   const header = request.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!token) return reply.code(401).send({ message: 'Bearer token wajib.' });
+  if (API_TOKENS.has(token)) {
+    request.user = { id: 'api', name: 'API Finance', role: 'admin', must_change_password: false };
+    return;
+  }
   const { rows } = await pool.query(
     `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = $1 AND u.deleted_at IS NULL`,
@@ -296,8 +300,14 @@ app.post('/api/users', { preHandler: adminPreHandler }, async (request, reply) =
   return reply.code(201).send({ id });
 });
 
-app.patch('/api/users/:id', { preHandler: adminPreHandler }, async (request, reply) => {
+app.patch('/api/users/:id', { preHandler: authPreHandler }, async (request, reply) => {
+  if (request.user.role !== 'admin' && request.user.id !== request.params.id) {
+    return reply.code(403).send({ message: 'Admin atau pemilik akun saja.' });
+  }
   const b = request.body || {};
+  if (request.user.role !== 'admin' && b.role && b.role !== request.user.role) {
+    return reply.code(403).send({ message: 'Role hanya bisa diubah Admin.' });
+  }
   const sets = [];
   const params = [];
   for (const [field, value] of [['name', b.name], ['role', b.role], ['username', b.username]]) {
@@ -311,6 +321,253 @@ app.patch('/api/users/:id', { preHandler: adminPreHandler }, async (request, rep
   const { rowCount } = await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
   if (!rowCount) return reply.code(404).send({ message: 'User tidak ditemukan.' });
   return { ok: true };
+});
+
+app.post('/api/auth/verify', { preHandler: authPreHandler }, async (request) => {
+  const password = String(request.body?.password || '');
+  return { ok: verifyPassword(password, request.user.password_hash) };
+});
+
+app.post('/api/users/:id/reset-password', { preHandler: adminPreHandler }, async (request, reply) => {
+  const password = String(request.body?.password || '');
+  if (password.length < 6) return reply.code(400).send({ message: 'Password minimal 6 karakter.' });
+  const { rowCount } = await pool.query(
+    'UPDATE users SET password_hash = $1, must_change_password = TRUE WHERE id = $2',
+    [hashPassword(password), request.params.id],
+  );
+  if (!rowCount) return reply.code(404).send({ message: 'User tidak ditemukan.' });
+  return { ok: true };
+});
+
+function iso(value) {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+}
+
+function dateOnly(value) {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+}
+
+function projectToFront(row, owners, history, docs) {
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type || '',
+    subtype: row.subtype || '',
+    entity: row.entity || '',
+    clientId: row.client_id || '',
+    stage: row.stage || 'lead',
+    qlNo: row.ql_no || '',
+    poNo: row.po_no || '',
+    lead: row.lead_kind || 'cold',
+    source: row.source || '',
+    qlStatus: row.ql_status || '',
+    qlNote: row.ql_note || '',
+    offer: Number(row.offer || 0),
+    dealValue: Number(row.deal_value || 0),
+    start: dateOnly(row.start_date),
+    end: dateOnly(row.end_date),
+    desc: row.description || '',
+    owners,
+    createdAt: iso(row.created_at),
+    createdBy: row.created_by || '',
+    stageChangedAt: iso(row.stage_changed_at),
+    deletedAt: iso(row.deleted_at),
+    deletedBy: '',
+    history: history.map((h) => ({
+      stage: h.stage,
+      at: iso(h.at),
+      by: h.by_user || '',
+      note: h.note || '',
+      ...(h.ql_no ? { qlNo: h.ql_no } : {}),
+    })),
+    docs,
+  };
+}
+
+async function getSnapshot() {
+  const [users, clients, projects, owners, history, documents, audit, master] = await Promise.all([
+    pool.query('SELECT * FROM users ORDER BY name'),
+    pool.query('SELECT * FROM clients ORDER BY name'),
+    pool.query('SELECT * FROM projects ORDER BY stage_changed_at DESC'),
+    pool.query('SELECT * FROM project_owners'),
+    pool.query('SELECT * FROM project_history ORDER BY at ASC'),
+    pool.query('SELECT * FROM documents ORDER BY rev ASC'),
+    pool.query('SELECT * FROM audit_log ORDER BY at ASC'),
+    pool.query("SELECT value FROM app_master WHERE key = 'master'"),
+  ]);
+
+  const ownersByProject = new Map();
+  for (const o of owners.rows) {
+    const list = ownersByProject.get(o.project_id) || [];
+    list.push(o.user_id);
+    ownersByProject.set(o.project_id, list);
+  }
+  const historyByProject = new Map();
+  for (const h of history.rows) {
+    const list = historyByProject.get(h.project_id) || [];
+    list.push(h);
+    historyByProject.set(h.project_id, list);
+  }
+  const docsByProject = new Map();
+  for (const d of documents.rows) {
+    const slots = docsByProject.get(d.project_id) || {};
+    const revs = slots[d.slot] || [];
+    revs.push({
+      id: d.file_key || '', name: d.name, size: Number(d.size || 0), type: d.mime || '',
+      at: iso(d.uploaded_at), by: d.uploaded_by || '', rev: d.rev,
+    });
+    slots[d.slot] = revs;
+    docsByProject.set(d.project_id, slots);
+  }
+  const docs = {};
+  for (const [pid, slots] of docsByProject) {
+    docs[pid] = {};
+    for (const [slot, revs] of Object.entries(slots)) {
+      const latest = revs[revs.length - 1];
+      docs[pid][slot] = { ...latest, history: revs };
+    }
+  }
+
+  return {
+    seq: projects.rows.length,
+    qlSeq: {},
+    poSeq: 0,
+    users: users.rows.map(publicUser),
+    clients: clients.rows,
+    projects: projects.rows.map((p) => projectToFront(
+      p,
+      ownersByProject.get(p.id) || [],
+      historyByProject.get(p.id) || [],
+      docs[p.id] || {},
+    )),
+    audit: audit.rows.map((a) => ({
+      id: String(a.id), projectId: a.project_id || '', at: iso(a.at),
+      by: a.by_user || '', byName: a.by_user || '', action: a.action, detail: a.detail || '',
+    })),
+    master: master.rows[0]?.value || null,
+    masterHistory: [],
+  };
+}
+
+app.get('/api/snapshot', { preHandler: authPreHandler }, async () => getSnapshot());
+
+app.post('/api/sync', { preHandler: authPreHandler }, async (request, reply) => {
+  const body = request.body || {};
+  if (!Array.isArray(body.projects) || !Array.isArray(body.clients)) {
+    return reply.code(400).send({ message: 'projects dan clients wajib array.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const c of body.clients) {
+      await client.query(
+        `INSERT INTO clients (id, name, pic, wa, email, notes, created_by, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8::timestamptz, now()))
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name, pic = EXCLUDED.pic, wa = EXCLUDED.wa,
+           email = EXCLUDED.email, notes = EXCLUDED.notes`,
+        [c.id, c.name || '', c.pic || '', c.wa || '', c.email || '', c.notes || '', c.createdBy || null, c.createdAt || null],
+      );
+    }
+    if (Array.isArray(body.users)) {
+      for (const u of body.users) {
+        if (!u || !u.id) continue;
+        const exists = await client.query('SELECT 1 FROM users WHERE id = $1', [u.id]);
+        if (exists.rowCount) {
+          await client.query(
+            `UPDATE users SET name = $2, role = $3, must_change_password = $4, deleted_at = $5 WHERE id = $1`,
+            [u.id, u.name || '', u.role || 'user', Boolean(u.mustChangePassword), u.deletedAt || null],
+          );
+        } else {
+          await client.query(
+            `INSERT INTO users (id, name, username, role, password_hash, must_change_password, deleted_at)
+             VALUES ($1,$2,$3,$4,$5,TRUE,$6) ON CONFLICT DO NOTHING`,
+            [u.id, u.name || '', u.username || u.id, u.role || 'user', hashPassword(crypto.randomBytes(16).toString('hex')), u.deletedAt || null],
+          );
+        }
+      }
+    }
+    for (const p of body.projects) {
+      await client.query(
+        `INSERT INTO projects
+          (id, name, type, subtype, entity, client_id, stage, ql_no, po_no, lead_kind, source,
+           ql_status, ql_note, offer, deal_value, start_date, end_date, description,
+           created_by, created_at, stage_changed_at, deleted_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name, type = EXCLUDED.type, subtype = EXCLUDED.subtype,
+           entity = EXCLUDED.entity, client_id = EXCLUDED.client_id, stage = EXCLUDED.stage,
+           ql_no = EXCLUDED.ql_no, po_no = EXCLUDED.po_no, lead_kind = EXCLUDED.lead_kind,
+           source = EXCLUDED.source, ql_status = EXCLUDED.ql_status, ql_note = EXCLUDED.ql_note,
+           offer = EXCLUDED.offer, deal_value = EXCLUDED.deal_value,
+           start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date,
+           description = EXCLUDED.description, stage_changed_at = EXCLUDED.stage_changed_at,
+           deleted_at = EXCLUDED.deleted_at`,
+        [p.id, p.name || '', p.type || '', p.subtype || '', p.entity || '', p.clientId || null,
+          p.stage || 'lead', p.qlNo || null, p.poNo || null, p.lead || 'cold', p.source || '',
+          p.qlStatus || '', p.qlNote || '', Number(p.offer || 0), Number(p.dealValue || 0),
+          p.start || null, p.end || null, p.desc || '', p.createdBy || null,
+          p.createdAt || null, p.stageChangedAt || null, p.deletedAt || null],
+      );
+      await client.query('DELETE FROM project_owners WHERE project_id = $1', [p.id]);
+      for (const uid of Array.isArray(p.owners) ? p.owners : []) {
+        await client.query('INSERT INTO project_owners (project_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [p.id, uid]);
+      }
+      await client.query('DELETE FROM project_history WHERE project_id = $1', [p.id]);
+      for (const h of Array.isArray(p.history) ? p.history : []) {
+        await client.query(
+          'INSERT INTO project_history (project_id, stage, at, by_user, note, ql_no) VALUES ($1,$2,$3,$4,$5,$6)',
+          [p.id, h.stage || 'lead', h.at || null, h.by || null, h.note || '', h.qlNo || null],
+        );
+      }
+      await client.query('DELETE FROM documents WHERE project_id = $1', [p.id]);
+      const docs = p.docs || {};
+      for (const [slot, current] of Object.entries(docs)) {
+        const revs = Array.isArray(current.history) ? current.history.slice() : [];
+        if (!revs.length || revs[revs.length - 1].id !== current.id) {
+          revs.push({ ...current, rev: current.rev || revs.length + 1 });
+        }
+        for (const d of revs) {
+          if (!d || !d.id) continue;
+          await client.query(
+            `INSERT INTO documents (id, project_id, slot, rev, file_key, name, size, mime, uploaded_by, uploaded_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10::timestamptz, now()))
+             ON CONFLICT (id) DO UPDATE SET
+               slot = EXCLUDED.slot, rev = EXCLUDED.rev, name = EXCLUDED.name,
+               size = EXCLUDED.size, mime = EXCLUDED.mime`,
+            [d.id, p.id, slot, Number(d.rev || 1) || 1, d.id, d.name || '', Number(d.size || 0), d.type || '', d.by || null, d.at || null],
+          );
+        }
+      }
+    }
+    if (Array.isArray(body.audit)) {
+      await client.query('DELETE FROM audit_log');
+      for (const a of body.audit) {
+        await client.query(
+          'INSERT INTO audit_log (project_id, at, by_user, action, detail) VALUES ($1,$2,$3,$4,$5)',
+          [a.projectId || null, a.at || null, a.by || null, a.action || '', a.detail || ''],
+        );
+      }
+    }
+    if (body.master) {
+      await client.query(
+        `INSERT INTO app_master (key, value) VALUES ('master', $1::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+        [JSON.stringify(body.master)],
+      );
+    }
+    await client.query('COMMIT');
+    return { ok: true, projects: body.projects.length, clients: body.clients.length };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 });
 
 app.setNotFoundHandler((request, reply) => reply.code(404).send({ message: 'Endpoint tidak ditemukan.' }));
