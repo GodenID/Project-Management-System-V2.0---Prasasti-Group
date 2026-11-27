@@ -5,7 +5,7 @@ const Fastify = require('fastify');
 const cors = require('@fastify/cors');
 const {
   S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand,
-  ListObjectsV2Command, DeleteObjectsCommand,
+  ListObjectsV2Command, DeleteObjectsCommand, HeadObjectCommand,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { pool, initDb } = require('./db');
@@ -875,7 +875,7 @@ app.post('/api/files/reconcile', { preHandler: adminPreHandler }, async (request
     }
     token = list.NextContinuationToken;
   } while (token);
-  const dry = request.query?.dry === 'true';
+  const dry = request.query?.apply !== 'true';
   if (!dry) {
     for (let i = 0; i < orphans.length; i += 1000) {
       await s3.send(new DeleteObjectsCommand({
@@ -885,6 +885,37 @@ app.post('/api/files/reconcile', { preHandler: adminPreHandler }, async (request
     }
   }
   return { ok: true, dry, scanned, known: known.size, deleted: dry ? 0 : orphans.length, orphans: orphans.length, keys: orphans.slice(0, 20) };
+});
+
+app.post('/api/files/restore', { preHandler: adminPreHandler }, async (request) => {
+  if (!s3) return { ok: false, message: 'S3 belum dikonfigurasi di server.' };
+  const keys = (Array.isArray(request.body?.keys) ? request.body.keys : []).map(String).filter(Boolean);
+  let restored = 0;
+  for (const key of keys) {
+    const parts = key.split('/');
+    if (parts.length < 4) continue;
+    const exists = await pool.query('SELECT 1 FROM documents WHERE file_key = $1', [key]);
+    if (exists.rowCount) continue;
+    const project = await pool.query(
+      "SELECT id FROM projects WHERE replace(lower(name), ' ', '-') = lower($1) ORDER BY created_at DESC LIMIT 1", [parts[1]],
+    );
+    if (!project.rows.length) continue;
+    const match = /^rev-(\d+)-(.*)$/.exec(parts.slice(3).join('/'));
+    const rev = Number(match?.[1] || 1) || 1;
+    const name = match?.[2] || 'berkas';
+    let head = {};
+    try {
+      const res = await s3.send(new HeadObjectCommand({ Bucket: S3_BUCKET, Key: key }));
+      head = { size: Number(res.ContentLength || 0), type: String(res.ContentType || '') };
+    } catch { /* objek tidak bisa dibaca; lewati */ }
+    const inserted = await pool.query(
+      `INSERT INTO documents (id, project_id, slot, rev, file_key, name, size, mime, uploaded_by, uploaded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now()) ON CONFLICT DO NOTHING`,
+      [newId('f'), project.rows[0].id, parts[2], rev, key, name, head.size || 0, head.type || '', request.user.id],
+    );
+    restored += inserted.rowCount || 0;
+  }
+  return { ok: true, restored, syncRev: await bumpRev() };
 });
 
 app.setNotFoundHandler((request, reply) => reply.code(404).send({ message: 'Endpoint tidak ditemukan.' }));
