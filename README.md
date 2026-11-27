@@ -83,6 +83,9 @@ npx serve .
 - Project Pages: `pms-prasasti`.
 - URL: `https://pms-prasasti.pages.dev`.
 - Domain rencana: `https://pms.prasastigroup.id` — tambahkan CNAME ke `pms-prasasti.pages.dev` di Cloudflare.
+- Dokumen project tersimpan di S3-compatible `s3.ap-southeast-1.onidel.cloud`, bucket `pmsv2`, region `ap-southeast-1`.
+- Path objek: `<username>/<nama-project>/<slot>/rev-<n>-<nama-file>`. Contoh: `goden/Test-API/quotation/rev-1-Quotation.pdf`.
+- Backend menyimpan metadata revisi di Postgres dan memakai presigned URL untuk unduh/lihat.
 - `config.js` berisi alamat API. Wajib HTTPS karena Pages melayani HTTPS.
 - `store.js` otomatis memakai API bila `window.PMS_API_URL` terisi. Data tetap dicache di `localStorage` sebagai fallback.
 - File yang di-upload ke Pages: `.html`, `.css`, `.js` di root. Folder `server/` tidak ikut.
