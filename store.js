@@ -674,7 +674,9 @@
         a.href = url; a.download = meta.name || 'berkas';
         document.body.appendChild(a); a.click(); a.remove();
         return true;
-      } catch { return false; }
+      } catch (err) {
+        throw new Error(err.message || 'Gagal mengunduh berkas dari server.');
+      }
     }
     let url = meta.dataUrl || '';   // berkas lama masih tersimpan sebagai data URL
     let revoke = false;
@@ -712,7 +714,9 @@
       try {
         const url = await apiFileUrl(meta);
         return Boolean(window.open(url, '_blank', 'noopener,noreferrer'));
-      } catch { return false; }
+      } catch (err) {
+        throw new Error(err.message || 'Gagal membuka berkas dari server.');
+      }
     }
     let url = meta.dataUrl || '';
     let revoke = false;

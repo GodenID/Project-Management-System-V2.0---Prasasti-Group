@@ -3074,9 +3074,10 @@
     if (dl) {
       const [slot, idx] = dl.dataset.docDl.split(':');
       const meta = idx === undefined ? dealDocs[slot] : docHistoryOf(dealDocs[slot])[Number(idx)];
-      if (meta && !(await AlurStore.downloadFile(meta))) {
-        setErr('d-docs', 'Berkas tidak ditemukan di penyimpanan browser ini.');
-      }
+      try {
+        const ok = await AlurStore.downloadFile(meta);
+        if (!ok) setErr('d-docs', 'Berkas tidak ditemukan di penyimpanan browser ini.');
+      } catch (err) { setErr('d-docs', err.message); }
     }
   });
 
@@ -4711,19 +4712,22 @@
       const proj = find(pid);
       const meta = proj ? docRefMeta(proj, slot, idx) : null;
       if (!meta) return;
-      if (!(await AlurStore.previewFile(meta))) {
-        toast('Preview hanya untuk PDF dan gambar. Berkas lain akan diunduh.', { tone: 'warn' });
-        await AlurStore.downloadFile(meta);
-      }
+      try {
+        if (!(await AlurStore.previewFile(meta))) {
+          toast('Preview hanya untuk PDF dan gambar. Berkas lain akan diunduh.', { tone: 'warn' });
+          await AlurStore.downloadFile(meta);
+        }
+      } catch (err) { toast(err.message, { tone: 'warn' }); }
       return;
     }
     const dlDoc = t.closest('[data-dl-doc]');
     if (dlDoc) {
       const [pid, slot, idx] = dlDoc.dataset.dlDoc.split(':');
       const proj = find(pid);
-      if (proj && !(await AlurStore.downloadFile(docRefMeta(proj, slot, idx)))) {
-        toast('Berkas tidak ditemukan di penyimpanan browser ini.', { tone: 'warn' });
-      }
+      try {
+        const ok = await AlurStore.downloadFile(docRefMeta(proj, slot, idx));
+        if (!ok) toast('Berkas tidak ditemukan di penyimpanan browser ini.', { tone: 'warn' });
+      } catch (err) { toast(err.message, { tone: 'warn' }); }
       return;
     }
     const row = t.closest('.row');

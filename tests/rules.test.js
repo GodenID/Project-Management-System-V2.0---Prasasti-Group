@@ -244,6 +244,15 @@ test('admin bisa menghapus akun karyawan', () => {
   assert.match(server, /DELETE FROM project_owners WHERE user_id/);
 });
 
+test('error unduh dokumen menampilkan pesan asli', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  const store = loadStoreSource();
+  assert.match(store, /Gagal mengunduh berkas dari server/);
+  assert.match(store, /Gagal membuka berkas dari server/);
+  assert.match(app, /setErr\('d-docs', err\.message\)/);
+  assert.match(app, /toast\(err\.message, \{ tone: 'warn' \}\)/);
+});
+
 test('tautan dokumen memakai domain proxy, bukan S3 mentah', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
   const worker = fs.readFileSync(path.join(__dirname, '..', 'proxy', 'worker.js'), 'utf8');
