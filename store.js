@@ -74,6 +74,14 @@
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { data = text; }
     if (!res.ok) {
+      if (res.status === 401 && auth) {
+        clearSession();
+        try {
+          if (global.location && !/login\.html$/.test(global.location.pathname)) {
+            global.location.replace('login.html');
+          }
+        } catch { /* abaikan bila bukan browser */ }
+      }
       const err = new Error((data && data.message) || `API gagal (${res.status}).`);
       err.status = res.status;
       throw err;
@@ -84,7 +92,7 @@
   async function init() {
     if (!API_MODE) return;
     const token = apiToken();
-    if (!token) return;
+    if (!token) { clearSession(); return; }
     try {
       const snapshot = await api('/api/snapshot');
       snapshotCache = snapshot;
@@ -487,6 +495,7 @@
   }
 
   function currentUser() {
+    if (API_MODE && !apiToken()) { clearSession(); return null; }
     const s = readJSON(sessionStorage, KEYS.session, null) || readJSON(localStorage, KEYS.session, null);
     if (!s || !s.userId) return null;
     // Sesi tidak kedaluwarsa otomatis. Keluar hanya lewat tombol Keluar,

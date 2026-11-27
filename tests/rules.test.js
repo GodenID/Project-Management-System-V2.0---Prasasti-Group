@@ -175,6 +175,15 @@ test('dokumen tersimpan ke S3/R2 per username dan project', () => {
   assert.match(app, /AlurStore\.putFile\(file, \{/);
 });
 
+test('401 API menghapus sesi dan memaksa login ulang', () => {
+  const store = loadStoreSource();
+  assert.match(store, /res\.status === 401 && auth/);
+  assert.match(store, /global\.location\.replace\('login\.html'\)/);
+  assert.match(store, /if \(!token\) \{ clearSession\(\); return; \}/);
+  assert.match(store, /if \(API_MODE && !apiToken\(\)\) \{ clearSession\(\); return null; \}/);
+  assert.match(store, /async function allocateNumber/);
+});
+
 test('umur di tahap: 3 hari kuning, 7 hari merah', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
   const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
