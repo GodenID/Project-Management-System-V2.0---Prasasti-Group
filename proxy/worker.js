@@ -30,7 +30,7 @@ async function handle(request, env) {
     return new Response('Token wajib', { status: 403 });
   }
   const expected = await sign(payload, env.DOC_PROXY_SECRET);
-  if (signature.toLowerCase() !== expected) {
+  if (signature !== expected) {
     return new Response('Token tidak valid', { status: 403 });
   }
   let data;
