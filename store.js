@@ -481,7 +481,13 @@
 
   // ----- Sesi -----
   function setSession(userId, remember) {
-    clearSession();
+    // Jangan hapus token API yang baru dibuat apiLogin().
+    // clearSession() hanya dipakai saat logout atau sesi tidak valid.
+    if (!API_MODE) clearSession();
+    else {
+      localStorage.removeItem(KEYS.session);
+      sessionStorage.removeItem(KEYS.session);
+    }
     writeJSON(remember ? localStorage : sessionStorage, KEYS.session, { userId, at: Date.now(), remember: Boolean(remember) });
   }
 

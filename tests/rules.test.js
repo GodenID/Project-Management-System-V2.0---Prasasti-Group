@@ -175,6 +175,12 @@ test('dokumen tersimpan ke S3/R2 per username dan project', () => {
   assert.match(app, /AlurStore\.putFile\(file, \{/);
 });
 
+test('setSession tidak menghapus token API saat login', () => {
+  const store = loadStoreSource();
+  assert.match(store, /if \(!API_MODE\) clearSession\(\);/);
+  assert.match(store, /Jangan hapus token API yang baru dibuat apiLogin/);
+});
+
 test('401 API menghapus sesi dan memaksa login ulang', () => {
   const store = loadStoreSource();
   assert.match(store, /res\.status === 401 && auth/);
