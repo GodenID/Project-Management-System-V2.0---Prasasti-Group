@@ -119,16 +119,16 @@
   // PIC project menjalankan project sampai jadi Deal, termasuk dokumennya.
   // Finance ikut boleh melengkapi dokumen dan nominal deal.
   const CAN = {
-    createProject: ['admin', 'manager', 'user'],
-    editProject: ['admin', 'manager', 'user'],
-    moveToQl: ['admin', 'manager', 'user'],
-    editQl: ['admin', 'manager', 'user'],
-    moveToDeal: ['admin', 'manager', 'user'],
-    moveToLost: ['admin', 'manager'],
-    editDocs: ['admin', 'manager', 'user', 'finance'],
-    editClient: ['admin', 'manager', 'user'],
-    deleteProject: ['admin', 'manager'],
-    restoreProject: ['admin', 'manager'],
+    createProject: ['admin', 'manager', 'bod', 'user'],
+    editProject: ['admin', 'manager', 'bod', 'user'],
+    moveToQl: ['admin', 'manager', 'bod', 'user'],
+    editQl: ['admin', 'manager', 'bod', 'user'],
+    moveToDeal: ['admin', 'manager', 'bod', 'user'],
+    moveToLost: ['admin', 'manager', 'bod'],
+    editDocs: ['admin', 'manager', 'bod', 'user', 'finance'],
+    editClient: ['admin', 'manager', 'bod', 'user'],
+    deleteProject: ['admin', 'manager', 'bod'],
+    restoreProject: ['admin', 'manager', 'bod'],
     deleteForever: ['admin'],
     manageUsers: ['admin'],
     masterData: ['admin'],
@@ -413,6 +413,7 @@
     clientList: { page: 1, perPage: 50, sortKey: 'projects', sortDir: -1, status: '' },
     trashList: { page: 1, perPage: 50 },
     trash: { query: '', selected: new Set() },
+    staff: { selected: new Set() },
     selected: new Set(),
   };
 
@@ -2393,6 +2394,9 @@
         || ROLE_LABEL[u.role].toLowerCase().includes(q))
       .sort((a, b) => (a.id === user.id ? -1 : b.id === user.id ? 1 : collator.compare(a.name, b.name)));
     const admin = can('manageUsers');
+    const selectable = list.filter((u) => u.id !== user.id);
+    const allOnPage = selectable.length > 0 && selectable.every((u) => ui.staff.selected.has(u.id));
+    const selectedStaff = [...ui.staff.selected].filter((id) => team.some((u) => u.id === id && u.id !== user.id));
     const byRole = AlurStore.ROLES.map((r) => [r.label, team.filter((u) => u.role === r.id).length]);
 
     const head = `<header class="view-head view-head--split">
@@ -2422,6 +2426,7 @@
       body = `<div class="table-wrap">
         <table class="table table--staff">
           <thead><tr>
+            ${admin ? `<th class="c-sel"><input type="checkbox" data-staff-select-all aria-label="Pilih semua karyawan di halaman ini"${allOnPage ? ' checked' : ''}></th>` : ''}
             <th class="c-name">Karyawan</th>
             <th class="c-email">Username</th>
             <th class="c-role">Role</th>
@@ -2435,7 +2440,14 @@
         </table>
       </div>`;
     }
-    return `<section class="stage">${head}${q ? `<p class="search-note">${list.length} karyawan cocok dengan “${esc(ui.query.trim())}”<button type="button" class="link-btn" data-action="clear-search">Hapus pencarian</button></p>` : ''}${body}${roleHelp}</section>`;
+    const bulk = admin && selectedStaff.length ? `<div class="bulk-bar" role="region" aria-label="Aksi massal karyawan">
+      <span class="bulk-count"><b>${selectedStaff.length}</b> karyawan dipilih</span>
+      <span class="bulk-actions">
+        <button type="button" class="btn btn-sm btn-danger" data-action="delete-selected-users">${icon('trash')}Hapus yang dipilih</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="clear-staff-selection">Batal pilihan</button>
+      </span>
+    </div>` : '';
+    return `<section class="stage">${head}${q ? `<p class="search-note">${list.length} karyawan cocok dengan “${esc(ui.query.trim())}”<button type="button" class="link-btn" data-action="clear-search">Hapus pencarian</button></p>` : ''}${bulk}${body}${roleHelp}</section>`;
   }
 
   function staffRow(u, admin) {
@@ -2447,6 +2459,7 @@
     const inactive = Boolean(u.deletedAt);
     return `<tr class="row${editable ? '' : ' is-flat'}${inactive ? ' is-inactive' : ''}" data-user="${esc(u.id)}"
       ${editable ? 'tabindex="0"' : ''} aria-label="${esc(`${u.name}, username ${u.username}, role ${ROLE_LABEL[u.role]}${inactive ? ', nonaktif' : ''}.`)}">
+      ${admin ? `<td class="c-sel"><input type="checkbox" data-staff-select="${esc(u.id)}" aria-label="Pilih ${esc(u.name)}"${isMe ? ' disabled' : ui.staff.selected.has(u.id) ? ' checked' : ''}></td>` : ''}
       <td class="c-name" data-th="Karyawan">
         <span class="person">
           <span class="avatar avatar--sm" aria-hidden="true">${esc(initials(u.name))}</span>
@@ -4550,7 +4563,7 @@
   // ---------------------------------------------------------------------------
   document.addEventListener('click', async (e) => {
     const t = e.target;
-    if (e.target.matches('[data-select], [data-select-all], [data-trash-select], [data-trash-select-all]')) return;
+    if (e.target.matches('[data-select], [data-select-all], [data-trash-select], [data-trash-select-all], [data-staff-select], [data-staff-select-all]')) return;
 
     const closeBtn = t.closest('[data-close]');
     if (closeBtn) {
@@ -4623,6 +4636,32 @@
       else if (a === 'delete-forever') deleteForever(act.dataset.id);
       else if (a === 'restore-selected-trash') restoreSelectedTrash();
       else if (a === 'delete-selected-trash') deleteSelectedTrash();
+      else if (a === 'clear-staff-selection') { ui.staff.selected.clear(); renderView(); }
+      else if (a === 'delete-selected-users') {
+        if (!can('manageUsers')) { toast(denyReason('manageUsers'), { tone: 'warn' }); }
+        else {
+          const ids = [...ui.staff.selected].filter((id) => team.some((u) => u.id === id && u.id !== user.id));
+          if (!ids.length) { ui.staff.selected.clear(); renderView(); return; }
+          const names = ids.map(teamName).join(', ');
+          const ok = await confirmDialog({
+            title: `Hapus ${ids.length} akun karyawan?`,
+            body: `${names}. PIC project yang dipegang akan dilepas. Riwayat tetap menyimpan nama terakhirnya. Tindakan ini tidak bisa dibatalkan.`,
+            okLabel: 'Hapus yang dipilih', tone: 'danger', requireText: 'yakin',
+          });
+          if (!ok) return;
+          const failed = [];
+          for (const id of ids) {
+            try { if (AlurStore.deleteUser) await AlurStore.deleteUser(id); }
+            catch (err) { failed.push(`${teamName(id)}: ${err.message}`); }
+          }
+          ui.staff.selected.clear();
+          team = AlurStore.publicUsers();
+          audit('', 'user.deleteBulk', `${ids.length} akun`);
+          save(); render();
+          if (failed.length) toast(failed.join('; '), { tone: 'warn' });
+          else toast(`${ids.length} akun dihapus.`, { tone: 'ok' });
+        }
+      }
       else if (a === 'clear-trash-selection') { ui.trash.selected.clear(); renderView(); }
       else if (a === 'clear-trash-search') {
         ui.trash.query = '';
@@ -4961,6 +5000,20 @@
 
   viewEl.addEventListener('change', (e) => {
     const el = e.target;
+    if (el.hasAttribute('data-staff-select-all')) {
+      viewEl.querySelectorAll('[data-staff-select]:not(:disabled)').forEach((cb) => {
+        if (el.checked) ui.staff.selected.add(cb.dataset.staffSelect);
+        else ui.staff.selected.delete(cb.dataset.staffSelect);
+      });
+      renderView();
+      return;
+    }
+    if (el.dataset.staffSelect) {
+      if (el.checked) ui.staff.selected.add(el.dataset.staffSelect);
+      else ui.staff.selected.delete(el.dataset.staffSelect);
+      renderView();
+      return;
+    }
     if (el.hasAttribute('data-trash-select-all')) {
       viewEl.querySelectorAll('[data-trash-select]').forEach((cb) => {
         if (el.checked) ui.trash.selected.add(cb.dataset.trashSelect);

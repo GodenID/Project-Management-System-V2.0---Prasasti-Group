@@ -127,6 +127,15 @@ async function authPreHandler(request, reply) {
   request.user = rows[0];
 }
 
+async function canWriteProject(user, projectId, client = pool) {
+  if (!user || user.role !== 'user') return true;
+  if (!projectId) return false;
+  const { rowCount } = await client.query(
+    'SELECT 1 FROM project_owners WHERE project_id = $1 AND user_id = $2', [projectId, user.id],
+  );
+  return rowCount > 0;
+}
+
 async function adminPreHandler(request, reply) {
   await authPreHandler(request, reply);
   if (reply.sent) return;
@@ -273,7 +282,8 @@ app.post('/api/projects', { preHandler: authPreHandler }, async (request, reply)
       b.leadKind || 'cold', b.source || '', b.startDate || null, b.endDate || null,
       b.description || '', request.user.id, client],
   );
-  const owners = Array.isArray(b.owners) && b.owners.length ? b.owners : [request.user.id];
+  const owners = Array.isArray(b.owners) && b.owners.length ? b.owners.slice() : [request.user.id];
+  if (request.user.role === 'user' && !owners.includes(request.user.id)) owners.push(request.user.id);
   for (const uid of owners) {
     await pool.query('INSERT INTO project_owners (project_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, uid]);
   }
@@ -301,6 +311,10 @@ async function allocateNumber(request, reply, kind) {
     }
     const project = await client.query('SELECT * FROM projects WHERE id = $1 FOR UPDATE', [projectId]);
     if (!project.rows.length) { await client.query('ROLLBACK'); return reply.code(404).send({ message: 'Project tidak ditemukan.' }); }
+    if (!await canWriteProject(request.user, projectId, client)) {
+      await client.query('ROLLBACK');
+      return reply.code(403).send({ message: 'Project ini bukan PIC Anda.' });
+    }
     const column = kind === 'ql' ? 'ql_no' : 'po_no';
     if (project.rows[0][column]) {
       await client.query('INSERT INTO idempotency (key, response) VALUES ($1, $2) ON CONFLICT DO NOTHING', [key, JSON.stringify({ [column]: project.rows[0][column] })]);
@@ -455,6 +469,9 @@ app.post('/api/files', { preHandler: authPreHandler }, async (request, reply) =>
   const bytes = Buffer.from(data, 'base64');
   if (!bytes.length) return reply.code(400).send({ message: 'Berkas kosong.' });
   if (bytes.length > 10 * 1024 * 1024) return reply.code(400).send({ message: 'Berkas melebihi 10 MB.' });
+  if (!await canWriteProject(request.user, projectId)) {
+    return reply.code(403).send({ message: 'Project ini bukan PIC Anda.' });
+  }
   const project = await pool.query('SELECT id, name FROM projects WHERE id = $1', [projectId]);
   if (!project.rows.length) return reply.code(404).send({ message: 'Project tidak ditemukan.' });
   const username = String(request.user.username || b.username || 'api');
@@ -494,6 +511,9 @@ app.post('/api/files/presign', { preHandler: authPreHandler }, async (request, r
     return reply.code(400).send({ message: 'projectId, slot, name, dan size wajib.' });
   }
   if (size > 10 * 1024 * 1024) return reply.code(400).send({ message: 'Berkas melebihi 10 MB.' });
+  if (!await canWriteProject(request.user, projectId)) {
+    return reply.code(403).send({ message: 'Project ini bukan PIC Anda.' });
+  }
   const project = await pool.query('SELECT id, name FROM projects WHERE id = $1', [projectId]);
   if (!project.rows.length) return reply.code(404).send({ message: 'Project tidak ditemukan.' });
   const username = String(request.user.username || b.username || 'api');
@@ -517,6 +537,9 @@ app.post('/api/files/confirm', { preHandler: authPreHandler }, async (request, r
   const id = String(b.id || '');
   const key = String(b.key || '');
   if (!id || !key) return reply.code(400).send({ message: 'id dan key wajib.' });
+  if (!await canWriteProject(request.user, String(b.projectId || ''))) {
+    return reply.code(403).send({ message: 'Project ini bukan PIC Anda.' });
+  }
   const at = new Date().toISOString();
   await pool.query(
     `INSERT INTO documents (id, project_id, slot, rev, file_key, name, size, mime, uploaded_by, uploaded_at)
@@ -561,7 +584,7 @@ app.post('/api/files/delete', { preHandler: authPreHandler }, async (request, re
 });
 
 app.post('/api/projects/delete', { preHandler: authPreHandler }, async (request, reply) => {
-  if (!['admin', 'manager'].includes(request.user.role)) {
+  if (!['admin', 'manager', 'bod'].includes(request.user.role)) {
     return reply.code(403).send({ message: 'Hanya Manager atau Admin yang bisa menghapus permanen.' });
   }
   const ids = (Array.isArray(request.body?.ids) ? request.body.ids : []).map(String).filter(Boolean);
@@ -757,6 +780,14 @@ app.post('/api/sync', { preHandler: authPreHandler }, async (request, reply) => 
       return reply.code(409).send({
         message: 'Data berubah di tab lain. Muat ulang halaman.', syncRev: rev,
       });
+    }
+    if (request.user.role === 'user') {
+      for (const p of body.projects) {
+        if (!Array.isArray(p.owners) || !p.owners.includes(request.user.id)) {
+          await client.query('ROLLBACK');
+          return reply.code(403).send({ message: `Project ${p.name || p.id} bukan PIC Anda.` });
+        }
+      }
     }
     for (const c of body.clients) {
       await client.query(

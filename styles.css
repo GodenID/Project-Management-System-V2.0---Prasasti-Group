@@ -690,6 +690,7 @@ main { flex: 1; padding: 22px var(--pad-x) 64px; outline: none; }
 .role--user { color: var(--ink-2); border-color: var(--line-strong); background: var(--surface); }
 .role--finance { color: #146b55; border-color: #bfe0d6; background: #eaf6f2; }
 .role--manager { color: var(--primary-deep); border-color: var(--primary-tint-2); background: var(--primary-tint); }
+.role--bod { color: #0f5f6e; border-color: #b9dce4; background: #eaf6f8; }
 .role--admin { color: #7a3aa8; border-color: #ddc9ec; background: #f5eefb; }
 
 .role-help {

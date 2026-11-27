@@ -32,6 +32,7 @@
     { id: 'user', label: 'User', desc: 'Jalankan project yang dia pegang: input lead sampai jadi Deal.' },
     { id: 'finance', label: 'Finance', desc: 'Lengkapi dokumen dan nominal project yang sudah Deal.' },
     { id: 'manager', label: 'Manager', desc: 'Kelola seluruh project dan client, termasuk Tidak Deal dan hapus.' },
+    { id: 'bod', label: 'BOD', desc: 'Sama seperti Manager: kelola project dan client siapa pun, termasuk Tidak Deal dan hapus.' },
     { id: 'admin', label: 'Admin', desc: 'Semua akses manager, ditambah kelola akun karyawan dan role.' },
   ];
   const ROLE_IDS = ROLES.map((r) => r.id);

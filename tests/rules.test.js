@@ -233,6 +233,30 @@ test('upload di form Deal langsung tersimpan', () => {
   assert.match(app, /p\.docs\[slot\] = dealDocs\[slot\];[\s\S]{0,80}save\(\);/);
 });
 
+test('role BOD setara manager, user hanya mengubah project PIC-nya', () => {
+  const store = loadStoreSource();
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  assert.ok(store.includes("id: 'bod'"));
+  assert.ok(app.includes("moveToLost: ['admin', 'manager', 'bod']"));
+  assert.ok(app.includes("deleteProject: ['admin', 'manager', 'bod']"));
+  assert.ok(app.includes('const OWNER_ONLY = new Set([\'editProject\', \'moveToQl\', \'editQl\', \'moveToDeal\', \'editDocs\'])'));
+  assert.ok(app.includes("if (user.role === 'user' && p && OWNER_ONLY.has(cap)) return (p.owners || []).includes(user.id);"));
+  assert.ok(server.includes("['admin', 'manager', 'bod'].includes(request.user.role)"));
+  assert.ok(server.includes('async function canWriteProject(user, projectId, client = pool)'));
+  assert.ok(server.includes('Project ${p.name || p.id} bukan PIC Anda.'));
+  assert.ok(css.includes('.role--bod'));
+});
+
+test('admin bisa menghapus banyak karyawan sekaligus', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.ok(app.includes('data-staff-select-all'));
+  assert.ok(app.includes('data-staff-select="${esc(u.id)}"'));
+  assert.ok(app.includes("a === 'delete-selected-users'"));
+  assert.ok(app.includes('for (const id of ids)'));
+});
+
 test('admin bisa menghapus akun karyawan', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
   const store = loadStoreSource();
