@@ -875,13 +875,16 @@ app.post('/api/files/reconcile', { preHandler: adminPreHandler }, async () => {
     }
     token = list.NextContinuationToken;
   } while (token);
-  for (let i = 0; i < orphans.length; i += 1000) {
-    await s3.send(new DeleteObjectsCommand({
-      Bucket: S3_BUCKET,
-      Delete: { Objects: orphans.slice(i, i + 1000).map((Key) => ({ Key })) },
-    }));
+  const dry = request.query?.dry === 'true';
+  if (!dry) {
+    for (let i = 0; i < orphans.length; i += 1000) {
+      await s3.send(new DeleteObjectsCommand({
+        Bucket: S3_BUCKET,
+        Delete: { Objects: orphans.slice(i, i + 1000).map((Key) => ({ Key })) },
+      }));
+    }
   }
-  return { ok: true, scanned, known: known.size, deleted: orphans.length, keys: orphans.slice(0, 20) };
+  return { ok: true, dry, scanned, known: known.size, deleted: dry ? 0 : orphans.length, orphans: orphans.length, keys: orphans.slice(0, 20) };
 });
 
 app.setNotFoundHandler((request, reply) => reply.code(404).send({ message: 'Endpoint tidak ditemukan.' }));
