@@ -253,6 +253,11 @@ test('error unduh dokumen menampilkan pesan asli', () => {
   assert.match(app, /toast\(err\.message, \{ tone: 'warn' \}\)/);
 });
 
+test('nama PIC project berwarna hitam', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  assert.match(css, /\.owner-text,[\s\S]{0,120}color: #000;/);
+});
+
 test('snapshot memakai id dokumen, bukan file_key', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
   const schema = fs.readFileSync(path.join(__dirname, '..', 'server', 'schema.sql'), 'utf8');

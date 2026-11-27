@@ -1422,3 +1422,9 @@ dialog::backdrop { background: rgba(14, 26, 43, .4); }
 .btn-soft { border-color: var(--primary-tint-2); color: var(--primary); background: #fff; }
 .btn-soft:hover { background: var(--primary-tint); }
 .rail-tab--trash { min-width: 110px; }
+
+/* Nama PIC project harus hitam, bukan abu atau putih. */
+.owner-text,
+.owner-list li > span:last-child,
+.token-name,
+.picker-opt-name { color: #000; }
