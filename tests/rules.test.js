@@ -181,6 +181,18 @@ test('setSession tidak menghapus token API saat login', () => {
   assert.match(store, /Jangan hapus token API yang baru dibuat apiLogin/);
 });
 
+test('dokumen lama dimigrasi ke S3 saat sinkron', () => {
+  const store = loadStoreSource();
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server', 'index.js'), 'utf8');
+  assert.match(store, /async function prepareSyncPayload/);
+  assert.match(store, /dataUrlToBlob\(rev\.dataUrl/);
+  assert.match(store, /await getFile\(rev\.id\)/);
+  assert.match(store, /const uploaded = await putFile\(blob/);
+  assert.match(server, /if \(!key\) continue; \/\/ dokumen lama belum punya objek S3/);
+  assert.match(server, /file_key = EXCLUDED\.file_key/);
+  assert.match(server, /Dokumen lama belum termigrasi ke S3/);
+});
+
 test('upload dokumen menampilkan indikator loading', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
   const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');

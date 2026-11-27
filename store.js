@@ -98,6 +98,8 @@
       snapshotCache = snapshot;
       if (Array.isArray(snapshot.users)) writeJSON(localStorage, KEYS.users, snapshot.users);
       writeJSON(localStorage, KEYS.data, snapshot);
+      // Antre sinkron sekali saat buka: migrasi dokumen lama ke S3 bila perlu.
+      saveData(snapshot);
     } catch (err) {
       if (err.status === 401) clearSession();
       throw err;
@@ -855,6 +857,52 @@
     }
   }
 
+  async function prepareSyncPayload(data) {
+    const projects = data.projects || [];
+    const username = (currentUser() || {}).username || 'api';
+    for (const p of projects) {
+      const docs = p.docs || {};
+      for (const [slot, current] of Object.entries(docs)) {
+        if (!current || !current.id) continue;
+        const revs = Array.isArray(current.history) ? current.history.slice() : [];
+        if (!revs.length || revs[revs.length - 1].id !== current.id) {
+          revs.push({ ...current, rev: current.rev || revs.length + 1 });
+        }
+        for (let i = 0; i < revs.length; i += 1) {
+          const rev = revs[i];
+          if (!rev || rev.key || rev.file_key) continue;
+          let blob = null;
+          if (rev.dataUrl) {
+            try { blob = dataUrlToBlob(rev.dataUrl, rev.type); } catch { /* abaikan */ }
+          }
+          if (!blob && rev.id) {
+            try {
+              const rec = await getFile(rev.id);
+              if (rec && rec.blob) blob = rec.blob;
+              else if (rec && rec.dataUrl) blob = dataUrlToBlob(rec.dataUrl, rec.type);
+            } catch { /* abaikan */ }
+          }
+          if (!blob) continue;
+          try {
+            const uploaded = await putFile(blob, {
+              projectId: p.id, slot, projectName: p.name, username,
+            });
+            revs[i] = { ...rev, ...uploaded };
+          } catch { /* gagal upload dokumen lama, biarkan error muncul saat dibuka */ }
+        }
+        if (revs.length > 1) current.history = revs.slice(0, -1);
+        Object.assign(current, revs[revs.length - 1]);
+      }
+    }
+    return {
+      projects,
+      clients: data.clients || [],
+      audit: data.audit || [],
+      master: data.master || null,
+      users: getUsers(),
+    };
+  }
+
   function saveData(data) {
     writeJSON(localStorage, KEYS.data, data);
     if (!API_MODE) return;
@@ -862,15 +910,12 @@
     if (!apiToken()) return;
     clearTimeout(syncTimer);
     syncTimer = setTimeout(() => {
-      const payload = {
-        projects: data.projects || [],
-        clients: data.clients || [],
-        audit: data.audit || [],
-        master: data.master || null,
-        users: getUsers(),
-      };
       syncChain = syncChain
-        .then(() => api('/api/sync', { method: 'POST', body: payload }))
+        .then(async () => {
+          const ready = await prepareSyncPayload(data);
+          writeJSON(localStorage, KEYS.data, data);
+          return api('/api/sync', { method: 'POST', body: ready });
+        })
         .catch((err) => {
           console.error('Sinkronisasi ke API gagal:', err);
           if (typeof global.dispatchEvent === 'function') {

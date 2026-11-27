@@ -452,6 +452,9 @@ app.get('/api/files/:id/url', { preHandler: authPreHandler }, async (request, re
   const { rows } = await pool.query('SELECT * FROM documents WHERE id = $1', [request.params.id]);
   if (!rows.length) return reply.code(404).send({ message: 'Berkas tidak ditemukan.' });
   const doc = rows[0];
+  if (!doc.file_key || !String(doc.file_key).includes('/')) {
+    return reply.code(409).send({ message: 'Dokumen lama belum termigrasi ke S3. Simpan/muat ulang project sekali lagi.' });
+  }
   const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: S3_BUCKET, Key: doc.file_key }), { expiresIn: 600 });
   return { url, name: doc.name, type: doc.mime || '' };
 });
@@ -725,13 +728,15 @@ app.post('/api/sync', { preHandler: authPreHandler }, async (request, reply) => 
         }
         for (const d of revs) {
           if (!d || !d.id) continue;
+          const key = String(d.key || d.file_key || '');
+          if (!key) continue; // dokumen lama belum punya objek S3; jangan simpan key palsu
           await client.query(
             `INSERT INTO documents (id, project_id, slot, rev, file_key, name, size, mime, uploaded_by, uploaded_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10::timestamptz, now()))
              ON CONFLICT (id) DO UPDATE SET
-               slot = EXCLUDED.slot, rev = EXCLUDED.rev, name = EXCLUDED.name,
-               size = EXCLUDED.size, mime = EXCLUDED.mime`,
-            [d.id, p.id, slot, Number(d.rev || 1) || 1, d.id, d.name || '', Number(d.size || 0), d.type || '', d.by || null, d.at || null],
+               slot = EXCLUDED.slot, rev = EXCLUDED.rev, file_key = EXCLUDED.file_key,
+               name = EXCLUDED.name, size = EXCLUDED.size, mime = EXCLUDED.mime`,
+            [d.id, p.id, slot, Number(d.rev || 1) || 1, key, d.name || '', Number(d.size || 0), d.type || '', d.by || null, d.at || null],
           );
         }
       }
