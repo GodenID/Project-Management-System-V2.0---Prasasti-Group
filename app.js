@@ -3007,15 +3007,17 @@
       return;
     }
     try {
-      const p = find(dealFormEl.dataset.id);
+      const projectId = dealFormEl.dataset.id;
+      const p = find(projectId);
+      if (!p) { setErr('d-docs', 'Project tidak ditemukan. Muat ulang halaman.'); return; }
       const meta = await AlurStore.putFile(file, {
-        projectId: id, slot, projectName: p ? p.name : '', username: user.username,
+        projectId, slot, projectName: p.name, username: user.username,
       });
       dealNewFiles.push(meta.id);
       const unsaved = dealDocs[slot] && dealNewFiles.includes(dealDocs[slot].id) ? dealDocs[slot] : null;
       dealDocs[slot] = nextRevision(p, slot, meta, unsaved);
       audit(p.id, `doc.${slot}.revision`, `${dealDocs[slot].name} (Rev ${dealDocs[slot].rev})`);
-      renderDocFields(p ? p.type : '');
+      renderDocFields(p.type);
     } catch (err) {
       setErr('d-docs', `Berkas gagal disimpan: ${err.message}`);
     }

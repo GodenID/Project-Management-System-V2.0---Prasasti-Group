@@ -181,6 +181,13 @@ test('setSession tidak menghapus token API saat login', () => {
   assert.match(store, /Jangan hapus token API yang baru dibuat apiLogin/);
 });
 
+test('upload dokumen Deal memakai projectId yang benar', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.match(app, /const projectId = dealFormEl\.dataset\.id/);
+  assert.match(app, /projectId, slot, projectName: p\.name, username: user\.username/);
+  assert.doesNotMatch(app, /projectId: id, slot, projectName: p \? p\.name/);
+});
+
 test('401 API menghapus sesi dan memaksa login ulang', () => {
   const store = loadStoreSource();
   assert.match(store, /res\.status === 401 && auth/);
