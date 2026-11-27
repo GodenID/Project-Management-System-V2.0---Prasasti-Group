@@ -344,6 +344,7 @@ test('lihat PDF memakai pratinjau di dalam aplikasi', () => {
   assert.ok(html.includes('id="viewer-frame"'));
   assert.ok(css.includes('.modal--viewer'));
   assert.ok(store.includes('previewUrl: (meta) => apiFileUrl(meta)'));
+  assert.ok(app.includes('AlurStore.isPreviewable(meta)'));
   assert.ok(app.includes('await openViewer(meta)'));
 });
 

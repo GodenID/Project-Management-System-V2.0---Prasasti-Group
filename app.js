@@ -4765,7 +4765,7 @@
       const meta = proj ? docRefMeta(proj, slot, idx) : null;
       if (!meta) return;
       try {
-        if (AlurStore.API_MODE && meta.id && !meta.dataUrl && AlurStore.canPreview(meta)) {
+        if (AlurStore.API_MODE && meta.id && !meta.dataUrl && AlurStore.isPreviewable(meta)) {
           await openViewer(meta);
           return;
         }
